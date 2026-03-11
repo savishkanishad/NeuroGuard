@@ -68,7 +68,9 @@ async function initialize() {
 }
 
 function startCamera() {
-  navigator.mediaDevices.getUserMedia({ video: true }).then((stream) => {
+  navigator.mediaDevices.getUserMedia({ 
+    video: { facingMode: 'user' } 
+  }).then((stream) => {
     video.srcObject = stream;
     video.addEventListener("loadeddata", predictWebcam);
     loadingOverlay.style.display = "none";

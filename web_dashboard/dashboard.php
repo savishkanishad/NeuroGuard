@@ -23,7 +23,7 @@ $result = $conn->query($sql);
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NeuroGuard Pro Dashboard</title>
-    <link rel="stylesheet" href="dashboard.css">
+    <link rel="stylesheet" href="dashboard.css?v=<?php echo time(); ?>">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
@@ -46,6 +46,8 @@ $result = $conn->query($sql);
             <span class="stat-label">High Severity (Drowsy)</span>
         </div>
     </div>
+
+    <div class="swipe-hint">↔ Swipe table horizontally to see Time & Date</div>
 
     <div class="table-container">
         <table>

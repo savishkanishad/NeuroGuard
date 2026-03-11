@@ -1,6 +1,6 @@
 <?php
 // Centralized Database Connection Configuration
-$is_production = ($_SERVER['HTTP_HOST'] !== 'localhost' && $_SERVER['HTTP_HOST'] !== '127.0.0.1' && $_SERVER['SERVER_ADDR'] !== '::1');
+$is_production = (strpos($_SERVER['HTTP_HOST'], 'localhost') === false && strpos($_SERVER['HTTP_HOST'], '127.0.0.1') === false && $_SERVER['SERVER_ADDR'] !== '::1');
 
 if ($is_production) {
     // --- PRODUCTION (InfinityFree) ---

@@ -153,6 +153,41 @@ if (!isset($_SESSION['admin_logged_in'])) {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        /* --- MOBILE OPTIMIZATION --- */
+        @media (max-width: 768px) {
+            .header {
+                padding: 10px 15px;
+            }
+            .logo { font-size: 16px; }
+            .back-btn { font-size: 12px; }
+
+            .status-overlay {
+                top: auto;
+                bottom: 120px; /* Above the alert banner */
+                left: 15px;
+                right: 15px;
+                flex-direction: row;
+                gap: 10px;
+            }
+
+            .status-card {
+                flex: 1;
+                padding: 10px;
+                min-width: 0;
+            }
+
+            .status-label { font-size: 8px; }
+            .status-value { font-size: 14px; }
+
+            .alert-banner {
+                bottom: 30px;
+                padding: 15px 30px;
+                font-size: 18px;
+                width: 80%;
+                text-align: center;
+            }
+        }
     </style>
 </head>
 <body>
