@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+build/
+dist/
+*.spec
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Models (Large Files)
+*.task
+*.dat
+
+# Database
+database/*.sql
+!database/schema.sql
+
+# Local Configuration
+web_dashboard/db_config_local.php
+.env
+
+# IDEs
+.vscode/
+.idea/

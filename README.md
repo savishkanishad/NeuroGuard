@@ -1,69 +1,97 @@
-# NeuroGuard
+# 🧠 NeuroGuard Pro
 
-NeuroGuard is a simple driver monitoring system that uses face landmark detection to detect drowsiness, yawning, and distraction. It includes a Python-based vision engine and a PHP web dashboard for real-time alert monitoring.
-
----
-
-## 🧠 Project Structure
-
-- `eye_engine/`
-  - `sensor_test.py` — Main Python AI brain (camera + dlib face landmarks + alert logic)
-  - `shape_predictor_68_face_landmarks.dat` — Dlib facial landmark model (required)
-  - `alarm.wav` — Sound played when an alert triggers
-
-- `web_dashboard/`
-  - `index.php` — Admin login page
-  - `dashboard.php` — Live alert dashboard (auto-refresh)
-  - `log_alert.php` — API endpoint to record alerts into the database
-  - `start_session.php` — API endpoint to begin a driver session
-  - `logout.php` — Ends the admin session
-
-- `database/`
-  - `neuroguard_db.sql` — Full DB dump (includes sample data)
-  - `schema.sql` — Schema dump (same as `neuroguard_db.sql`)
-
-- `requirements.txt` — Python dependencies required to run the AI engine
+**NeuroGuard Pro** is a high-performance, dual-engine driver monitoring system (DMS) designed to enhance road safety through real-time AI computer vision. It detects drowsiness, yawning, and distractions (looking away) to alert the driver and log safety events for remote fleet management.
 
 ---
 
-## 🚀 Setup
+## ⚡ Dual-Engine Architecture
 
-### 1) Python dependencies
+NeuroGuard Pro offers two distinct ways to run the AI detection system:
 
-From the project root:
+### 1. 🐍 Python Engine (`eye_engine/`)
+Designed for dedicated hardware (like a Raspberry Pi or in-vehicle PC).
+- **Tech Stack**: Python 3.x, Mediapipe, OpenCV, Pygame.
+- **Advantages**: Low latency, background processing, direct hardware integration.
 
-```bash
-pip install -r requirements.txt
-```
+### 2. 🌐 Web Browser Engine (`web_dashboard/`)
+Designed for quick fleet-wide deployment and remote driver monitoring via a browser.
+- **Tech Stack**: JavaScript, Mediapipe (Web SDK), PHP 8.x, MySQL.
+- **Advantages**: No local Python setup required, works on any modern browser, integrated with the Admin Dashboard.
 
-### 2) Web dashboard (PHP + MySQL/MariaDB)
+---
 
-1. Import `database/neuroguard_db.sql` into your MySQL/MariaDB server.
-2. Place `web_dashboard/` in a web server document root (e.g., `htdocs`, `www`).
-3. Ensure PHP has MySQLi enabled.
+## 📂 Project Structure
 
-> **Note:** The dashboard currently connects using default credentials (`root` with no password). Update the connection strings in `web_dashboard/*.php` for production.
+- **`eye_engine/`**: Core Python AI brain.
+  - `sensor_test.py`: The primary detection script.
+  - `face_landmarker.task`: Mediapipe model file (required).
+  - `alarm.wav`: High-frequency audio alert.
+- **`web_dashboard/`**: Complete fleet management and web-monitoring suite.
+  - `index.php`: Admin authentication portal.
+  - `portal.php`: Mode selection (Dashboard vs. Monitor).
+  - `monitor.php`: **Web-based AI Engine** (Live webcam detection).
+  - `dashboard.php`: Real-time safety log & analytics.
+  - `engine.js`: Browser AI logic using Mediapipe Web SDK.
+- **`database/`**: SQL schema and sample data.
 
-### 3) Run the Python engine
+---
 
-From the project root:
+## 🚀 Quick Start
 
-```bash
-python eye_engine/sensor_test.py
-```
+### 1) Database Setup
+1. Create a MySQL database named `neuroguard_db`.
+2. Import `database/schema.sql` to set up the tables and default admin user.
+3. Update `web_dashboard/db_config.php` with your database credentials.
 
-It will open the webcam, detect drowsiness/yawning/distraction, play `alarm.wav`, and post alert events to the PHP API.
+### 2) Web Dashboard Deployment
+1. Move the `web_dashboard/` folder to your web server (XAMPP `htdocs`, Apache `www`, etc.).
+2. Navigate to `http://localhost/NeuroGuard%20Project/web_dashboard/`.
+3. Login using the admin credentials (default in `admin_users` table).
+
+### 3) Choose Your Monitor Mode
+
+#### Via Browser (Recommended for quick test):
+1. From the Web portal, click **"Driver Monitor"**.
+2. Grant camera permissions.
+3. The AI will begin detecting safety threats immediately.
+
+#### Via Python (Recommended for production):
+1. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. Run the engine:
+   ```bash
+   python eye_engine/sensor_test.py
+   ```
 
 ---
 
 ## 🔧 Configuration
 
-- Modify `eye_engine/sensor_test.py` to point at your API URL if you host the dashboard in a different folder or port.
-- Update database credentials in `web_dashboard/*.php`.
+### API Integration
+By default, the Python engine posts alerts to `http://localhost/neuroguard_api/log_alert.php`. 
+**Update `API_URL`** in `eye_engine/sensor_test.py` to match your local setup:
+```python
+API_URL = "http://localhost/NeuroGuard Project/web_dashboard/log_alert.php"
+```
+
+### Sensitivity Calibration
+You can adjust the following thresholds in `sensor_test.py` (Python) or `engine.js` (Web):
+- `EYE_THRESH`: Sensitivity for drowsiness (lower = more closed).
+- `MOUTH_THRESH`: Sensitivity for yawning.
+- `GAZE_MIN/MAX`: Safe horizontal "gaze zone".
 
 ---
 
-## ✅ Notes
+## ✅ Prerequisites
+- Webcam access.
+- PHP 7.4/8.x with `mysqli` extension.
+- MySQL/MariaDB.
+- Python 3.10+ (for Python Engine).
 
-- `shape_predictor_68_face_landmarks.dat` is required and must be in `eye_engine/`.
-- If you want to add session end tracking, add an `end_session.php` endpoint and call it from `sensor_test.py` when exiting.
+---
+
+## 📜 License
+This project is for educational and safety demonstration purposes. 
+*Stay safe on the road!*

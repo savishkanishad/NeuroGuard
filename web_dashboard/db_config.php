@@ -1,5 +1,7 @@
 <?php
 // Centralized Database Connection Configuration
+date_default_timezone_set('Asia/Colombo'); // Set PHP timezone to GMT+5:30
+
 $is_production = (strpos($_SERVER['HTTP_HOST'], 'localhost') === false && strpos($_SERVER['HTTP_HOST'], '127.0.0.1') === false && $_SERVER['SERVER_ADDR'] !== '::1');
 
 if ($is_production) {
@@ -21,4 +23,7 @@ $conn = new mysqli($host, $user, $pass, $db_name);
 if ($conn->connect_error) {
     die("Connection failed: " . $conn->connect_error);
 }
+
+// Set MySQL timezone to match local timezone
+$conn->query("SET time_zone = '+05:30'");
 ?>
