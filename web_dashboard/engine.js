@@ -11,6 +11,15 @@ const alertBanner = document.getElementById("alert-banner");
 const engineStatus = document.getElementById("engine-status");
 const alertStatus = document.getElementById("alert-status");
 const loadingOverlay = document.getElementById("loading-overlay");
+const nvToggle = document.getElementById("nv-toggle");
+
+if (nvToggle) {
+  nvToggle.addEventListener("click", () => {
+    const wrapper = document.getElementById("camera-wrapper");
+    if (wrapper) wrapper.classList.toggle("night-vision");
+    nvToggle.classList.toggle("active");
+  });
+}
 
 let faceLandmarker;
 let runningMode = "VIDEO";

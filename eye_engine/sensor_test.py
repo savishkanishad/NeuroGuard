@@ -1,8 +1,9 @@
-﻿import os
+import os
 import time
 import urllib.parse
 import urllib.request
 import cv2
+import numpy as np
 from scipy.spatial import distance as dist
 from pygame import mixer
 
@@ -11,6 +12,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ALARM_PATH = os.path.join(BASE_DIR, "alarm.wav")
 
 mixer.init()
+alarm_sound = None
 if os.path.exists(ALARM_PATH):
     alarm_sound = mixer.Sound(ALARM_PATH)
     print("✅ Alarm sound loaded successfully!")
@@ -21,7 +23,7 @@ else:
 API_URL = "http://localhost/neuroguard_api/log_alert.php"
 DRIVER_ID = 1
 COOLDOWN = 10  # Seconds between database logs for the same alert type
-last_alert_times = {"Drowsy": 0, "Yawn": 0, "Distracted": 0}
+last_alert_times = {"Drowsy": 0.0, "Yawn": 0.0, "Distracted": 0.0}
 
 # Detection Sensitivities
 EYE_THRESH = 0.25
@@ -34,10 +36,10 @@ DROWSY_WAIT_TIME = 1.5    # Must be closed for 1.5s to trigger
 DISTRACT_WAIT_TIME = 2.0  # Must look away for 2s to trigger
 
 # Tracking States
-drowsy_start_time = 0
+drowsy_start_time = 0.0
 IS_EYE_CLOSED = False
 
-distract_start_time = 0
+distract_start_time = 0.0
 IS_DISTRACTED = False
 
 # --- 3. SESSION & DATABASE SYNC ---
@@ -62,13 +64,13 @@ def sync_to_db(alert_type: str):
     if (now - last_alert_times.get(alert_type, 0)) <= COOLDOWN:
         return
 
+    last_alert_times[alert_type] = now
     payload = {"driver_id": DRIVER_ID, "session_id": SESSION_ID, "alert_type": alert_type}
     try:
         data = urllib.parse.urlencode(payload).encode("utf-8")
         req = urllib.request.Request(API_URL, data=data)
         with urllib.request.urlopen(req, timeout=1.0) as resp:
             print(f"DB Sync [{alert_type}]: {resp.read().decode('utf-8', errors='ignore')}")
-        last_alert_times[alert_type] = now
     except:
         pass
 
@@ -77,6 +79,8 @@ def eye_aspect_ratio(eye):
     A = dist.euclidean(eye[1], eye[5])
     B = dist.euclidean(eye[2], eye[4])
     C = dist.euclidean(eye[0], eye[3])
+    if C == 0:
+        return 0.0
     return (A + B) / (2.0 * C)
 
 def get_horizontal_ratio(iris, corner_left, corner_right):
@@ -102,6 +106,7 @@ R_IN, R_OUT = 133, 33
 
 # --- 6. MAIN DETECTION LOOP ---
 cap = cv2.VideoCapture(0)
+nv_mode = False
 
 while True:
     ret, frame = cap.read()
@@ -138,7 +143,7 @@ while True:
             if (time.time() - drowsy_start_time) > DROWSY_WAIT_TIME:
                 cv2.putText(frame, "DROWSY!", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
                 sync_to_db("Drowsy")
-                if not mixer.get_busy(): alarm_sound.play(-1)
+                if alarm_sound and not mixer.get_busy(): alarm_sound.play(-1)
         else:
             IS_EYE_CLOSED = False
 
@@ -148,7 +153,7 @@ while True:
             active_yawn = True
             cv2.putText(frame, "YAWNING!", (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,255), 2)
             sync_to_db("Yawn")
-            if not mixer.get_busy(): alarm_sound.play(-1)
+            if alarm_sound and not mixer.get_busy(): alarm_sound.play(-1)
 
         # 3. SMART DISTRACTION CHECK
         if avg_gaze < GAZE_MIN or avg_gaze > GAZE_MAX:
@@ -159,7 +164,7 @@ while True:
             if (time.time() - distract_start_time) > DISTRACT_WAIT_TIME:
                 cv2.putText(frame, "LOOKING AWAY!", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,165,0), 2)
                 sync_to_db("Distracted")
-                if not mixer.get_busy(): alarm_sound.play(-1)
+                if alarm_sound and not mixer.get_busy(): alarm_sound.play(-1)
         else:
             IS_DISTRACTED = False
 
@@ -171,10 +176,20 @@ while True:
        # --- ALARM CONTROL ---
         # Stop only if NO active safety threats are detected
         if not active_drowsy and not active_yawn and not active_distract:
-            alarm_sound.stop()
+            if alarm_sound: alarm_sound.stop()
+            
+    # Apply Night Vision Filter if enabled
+    if nv_mode:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        frame = cv2.merge((np.zeros_like(gray), gray, np.zeros_like(gray)))
+        frame = cv2.convertScaleAbs(frame, alpha=1.2, beta=30)
             
     cv2.imshow("NeuroGuard Pro Engine", frame)
-    if cv2.waitKey(1) & 0xFF == ord("q"): break
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord("q"):
+        break
+    elif key == ord("n"):
+        nv_mode = not nv_mode
 
 cap.release()
 cv2.destroyAllWindows()

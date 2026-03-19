@@ -60,6 +60,37 @@ if (!isset($_SESSION['admin_logged_in'])) {
             justify-content: center;
             align-items: center;
             background: #000;
+            overflow: hidden;
+        }
+
+        .camera-wrapper {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            transition: filter 0.5s ease, -webkit-filter 0.5s ease;
+        }
+
+        .camera-wrapper.night-vision {
+            -webkit-filter: brightness(1.5) contrast(1.2) sepia(100%) hue-rotate(90deg) saturate(3);
+            filter: brightness(1.5) contrast(1.2) sepia(100%) hue-rotate(90deg) saturate(3);
+        }
+
+        .nv-btn {
+            background: rgba(16, 185, 129, 0.2);
+            border: 1px solid rgba(16, 185, 129, 0.4);
+            color: #10b981;
+            padding: 8px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            font-family: inherit;
+        }
+        .nv-btn:hover { background: rgba(16, 185, 129, 0.3); }
+        .nv-btn.active {
+            background: #10b981;
+            color: #020617;
         }
 
         video#webcam {
@@ -198,12 +229,17 @@ if (!isset($_SESSION['admin_logged_in'])) {
 
     <div class="header">
         <div class="logo">NeuroGuard <span>PRO</span></div>
-        <a href="portal.php" class="back-btn">← Back to Portal</a>
+        <div style="display: flex; gap: 15px; align-items: center;">
+            <button id="nv-toggle" class="nv-btn">🌙 Night Vision</button>
+            <a href="portal.php" class="back-btn">← Back to Portal</a>
+        </div>
     </div>
 
     <div class="video-container">
-        <video id="webcam" autoplay playsinline></video>
-        <canvas id="output_canvas"></canvas>
+        <div id="camera-wrapper" class="camera-wrapper">
+            <video id="webcam" autoplay playsinline></video>
+            <canvas id="output_canvas"></canvas>
+        </div>
         
         <div class="status-overlay">
             <div class="status-card">
