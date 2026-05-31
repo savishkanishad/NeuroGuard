@@ -1,5 +1,7 @@
 <?php
 header("Access-Control-Allow-Origin: *");
+session_start();
+if (!isset($_SESSION['admin_logged_in'])) { http_response_code(403); die("Forbidden"); }
 require_once 'db_config.php';
 
 if ($conn->connect_error) {

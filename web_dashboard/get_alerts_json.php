@@ -1,5 +1,7 @@
 <?php
 header('Content-Type: application/json');
+session_start();
+if (!isset($_SESSION['admin_logged_in'])) { http_response_code(403); die("Forbidden"); }
 require_once 'db_config.php';
 
 // Count total alerts for today

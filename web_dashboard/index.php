@@ -7,9 +7,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $pass = $_POST['password'];
 
     // Check credentials
-    $result = $conn->query("SELECT * FROM admin_users WHERE username='$user' AND password_hash='$pass'");
+    $stmt = $conn->prepare("SELECT * FROM admin_users WHERE username = ?");
+    $stmt->bind_param("s", $user);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
 
-    if ($result->num_rows > 0) {
+    if ($row && password_verify($pass, $row['password_hash'])) {
         $_SESSION['admin_logged_in'] = true;
         header("Location: dashboard.php");
     } else {

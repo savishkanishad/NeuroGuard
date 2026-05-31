@@ -8,7 +8,7 @@ if ($is_production) {
     // --- PRODUCTION (InfinityFree) ---
     $host = "sql100.infinityfree.com";
     $user = "if0_41365392";
-    $pass = "ZiS9Zrk6luHAB8";
+    $pass = getenv('DB_PASSWORD');
     $db_name = "if0_41365392_NeuroGuard";
 } else {
     // --- LOCALHOST (XAMPP) ---

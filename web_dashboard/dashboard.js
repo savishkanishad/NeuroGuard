@@ -1,3 +1,7 @@
+function esc(s) {
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
 async function fetchAlerts() {
     try {
         const response = await fetch('get_alerts_json.php');
@@ -19,12 +23,12 @@ async function fetchAlerts() {
             const isNew = !currentIds.includes(alert.alert_id);
             
             html += `
-                <tr data-id="${alert.alert_id}" class="${isNew ? 'new-row' : ''}">
-                    <td>${alert.alert_id}</td>
-                    <td>${alert.full_name}</td>
-                    <td><span class="badge ${badgeClass}">${alert.alert_type}</span></td>
-                    <td>${alert.severity}</td>
-                    <td style="color: var(--text-muted)">${alert.timestamp}</td>
+                <tr data-id="${esc(alert.alert_id)}" class="${isNew ? 'new-row' : ''}">
+                    <td>${esc(alert.alert_id)}</td>
+                    <td>${esc(alert.full_name)}</td>
+                    <td><span class="badge ${badgeClass}">${esc(alert.alert_type)}</span></td>
+                    <td>${esc(alert.severity)}</td>
+                    <td style="color: var(--text-muted)">${esc(alert.timestamp)}</td>
                 </tr>
             `;
         });
