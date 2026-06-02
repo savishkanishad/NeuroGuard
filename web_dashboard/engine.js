@@ -81,11 +81,7 @@ function startCamera() {
     video: { facingMode: 'user' } 
   }).then((stream) => {
     video.srcObject = stream;
-    video.addEventListener("loadeddata", () => {
-      canvasElement.width = video.videoWidth;
-      canvasElement.height = video.videoHeight;
-      predictWebcam();
-    });
+    video.addEventListener("loadeddata", predictWebcam);
     loadingOverlay.style.display = "none";
     engineStatus.textContent = "Live";
   }).catch(e => {
@@ -185,26 +181,24 @@ async function predictWebcam() {
     // --- DETECTION LOGIC ---
     let detectedType = null;
 
-    // Track timing states regardless of alert status
+    // Check for Drowsy
     if (ear < EYE_THRESH) {
       if (!isEyeClosed) { drowsyStartTime = now; isEyeClosed = true; }
+      if (now - drowsyStartTime > DROWSY_WAIT_TIME) detectedType = "Drowsy";
     } else { isEyeClosed = false; }
 
+    // Check for Yawn
     if (mar > MOUTH_THRESH) {
       if (!isYawnOpen) { yawnStartTime = now; isYawnOpen = true; }
+      if (now - yawnStartTime > YAWN_WAIT_TIME) detectedType = "Yawn";
     } else { isYawnOpen = false; }
 
+    // Check for Distracted
     const isAway = (gaze < 0.25 || gaze > 0.75) || (turn < 0.35 || turn > 0.65);
     if (isAway) {
       if (!isDistracted) { distractStartTime = now; isDistracted = true; }
+      if (now - distractStartTime > DISTRACT_WAIT_TIME) detectedType = "Distracted";
     } else { isDistracted = false; }
-
-    // Only detect a new alert if no alert is currently active
-    if (!activeAlert) {
-      if (ear < EYE_THRESH && now - drowsyStartTime > DROWSY_WAIT_TIME) detectedType = "Drowsy";
-      else if (mar > MOUTH_THRESH && now - yawnStartTime > YAWN_WAIT_TIME) detectedType = "Yawn";
-      else if (isAway && now - distractStartTime > DISTRACT_WAIT_TIME) detectedType = "Distracted";
-    }
 
     // --- ALERT STATE MACHINE ---
     // If we have a detected event and aren't already in an alert/cooldown

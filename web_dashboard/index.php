@@ -6,18 +6,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $user = $_POST['username'];
     $pass = $_POST['password'];
 
-    // Check credentials
-    $stmt = $conn->prepare("SELECT * FROM admin_users WHERE username = ?");
-    $stmt->bind_param("s", $user);
+    // Check credentials using prepared statements to prevent SQL Injection
+    $stmt = $conn->prepare("SELECT * FROM admin_users WHERE username=? AND password_hash=?");
+    $stmt->bind_param("ss", $user, $pass);
     $stmt->execute();
-    $row = $stmt->get_result()->fetch_assoc();
+    $result = $stmt->get_result();
 
-    if ($row && password_verify($pass, $row['password_hash'])) {
+    if ($result->num_rows > 0) {
         $_SESSION['admin_logged_in'] = true;
         header("Location: dashboard.php");
+        exit();
     } else {
         $error = "Invalid Username or Password!";
     }
+    $stmt->close();
 }
 ?>
 

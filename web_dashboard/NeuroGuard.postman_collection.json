@@ -1,0 +1,164 @@
+{
+  "info": {
+    "name": "NeuroGuard Pro API",
+    "_postman_id": "neuroguard-pro-v1",
+    "description": "API collection for NeuroGuard Pro web dashboard.\n\nSet the `base_url` variable to:\n- Local:      http://localhost/web_dashboard\n- Production: https://your-domain.infinityfree.com/web_dashboard",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost/web_dashboard",
+      "type": "string",
+      "description": "Change this to your production URL when testing live"
+    }
+  ],
+  "item": [
+    {
+      "name": "1 – Get Alerts (JSON)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/get_alerts_json.php",
+          "host": ["{{base_url}}"],
+          "path": ["get_alerts_json.php"]
+        },
+        "description": "Returns today's alert stats and the last 20 alerts with driver names.\n\nExpected response:\n{\n  \"stats\": { \"total_today\": N, \"high_severity\": N },\n  \"alerts\": [ { alert rows... } ]\n}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Content-Type is JSON', function () {",
+              "    pm.response.to.have.header('Content-Type', 'application/json');",
+              "});",
+              "",
+              "pm.test('Response has stats and alerts keys', function () {",
+              "    const json = pm.response.json();",
+              "    pm.expect(json).to.have.property('stats');",
+              "    pm.expect(json).to.have.property('alerts');",
+              "    pm.expect(json.stats).to.have.property('total_today');",
+              "    pm.expect(json.stats).to.have.property('high_severity');",
+              "    pm.expect(json.alerts).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 – Start Session",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "driver_id",
+              "value": "1",
+              "type": "text",
+              "description": "ID of an existing driver in the drivers table"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/start_session.php",
+          "host": ["{{base_url}}"],
+          "path": ["start_session.php"]
+        },
+        "description": "Creates a new Active session for a driver.\nReturns the new session_id as a plain integer.\n\nThe returned session_id is auto-saved to the `session_id` variable for use in the next request."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Response is a valid session_id (integer)', function () {",
+              "    const id = parseInt(pm.response.text());",
+              "    pm.expect(id).to.be.a('number');",
+              "    pm.expect(id).to.be.greaterThan(0);",
+              "});",
+              "",
+              "// Auto-save session_id for use in the Log Alert request",
+              "const id = parseInt(pm.response.text());",
+              "if (!isNaN(id)) {",
+              "    pm.collectionVariables.set('session_id', id);",
+              "    console.log('Saved session_id:', id);",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3 – Log Alert",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "driver_id",
+              "value": "1",
+              "type": "text",
+              "description": "Must match a valid driver_id in the drivers table"
+            },
+            {
+              "key": "session_id",
+              "value": "{{session_id}}",
+              "type": "text",
+              "description": "Auto-filled from Start Session response. Or enter manually."
+            },
+            {
+              "key": "alert_type",
+              "value": "Drowsy",
+              "type": "text",
+              "description": "Options: Drowsy (High severity) | Yawning | Distracted (Medium severity)"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/log_alert.php",
+          "host": ["{{base_url}}"],
+          "path": ["log_alert.php"]
+        },
+        "description": "Logs a driver alert. Includes server-side 10-second debounce to prevent duplicate alerts.\n\nExpected responses:\n- 'Success'                          → alert inserted\n- 'Ignored: Duplicate alert within 10s window'  → debounce triggered\n- 'SQL Error: ...'                   → DB constraint failed"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Response is Success or Debounce (not a SQL error)', function () {",
+              "    const body = pm.response.text();",
+              "    pm.expect(body).to.not.include('SQL Error');",
+              "    pm.expect(body).to.not.include('Connection failed');",
+              "    const valid = ['Success', 'Ignored: Duplicate alert within 10s window'];",
+              "    pm.expect(valid.some(v => body.includes(v))).to.be.true;",
+              "});"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

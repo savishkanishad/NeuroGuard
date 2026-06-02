@@ -1,21 +1,32 @@
 <?php
-// Centralized Database Connection Configuration
-date_default_timezone_set('Asia/Colombo'); // Set PHP timezone to GMT+5:30
+// ============================================================
+// db_config.php — Loads credentials from config.php (gitignored)
+// ============================================================
 
-$is_production = (strpos($_SERVER['HTTP_HOST'], 'localhost') === false && strpos($_SERVER['HTTP_HOST'], '127.0.0.1') === false && $_SERVER['SERVER_ADDR'] !== '::1');
+$config_path = __DIR__ . '/config.php';
+if (!file_exists($config_path)) {
+    die("Missing config.php. Copy config.example.php to config.php and fill in your credentials.");
+}
+require_once $config_path;
+
+date_default_timezone_set('Asia/Colombo'); // GMT+5:30
+
+$is_production = (
+    strpos($_SERVER['HTTP_HOST'], 'localhost') === false &&
+    strpos($_SERVER['HTTP_HOST'], '127.0.0.1') === false &&
+    $_SERVER['SERVER_ADDR'] !== '::1'
+);
 
 if ($is_production) {
-    // --- PRODUCTION (InfinityFree) ---
-    $host = "sql100.infinityfree.com";
-    $user = "if0_41365392";
-    $pass = getenv('DB_PASSWORD');
-    $db_name = "if0_41365392_NeuroGuard";
+    $host    = DB_HOST_PROD;
+    $user    = DB_USER_PROD;
+    $pass    = DB_PASS_PROD;
+    $db_name = DB_NAME_PROD;
 } else {
-    // --- LOCALHOST (XAMPP) ---
-    $host = "localhost";
-    $user = "root";
-    $pass = "";
-    $db_name = "neuroguard_db";
+    $host    = DB_HOST_LOCAL;
+    $user    = DB_USER_LOCAL;
+    $pass    = DB_PASS_LOCAL;
+    $db_name = DB_NAME_LOCAL;
 }
 
 $conn = new mysqli($host, $user, $pass, $db_name);
