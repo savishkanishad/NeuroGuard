@@ -6,20 +6,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $user = $_POST['username'];
     $pass = $_POST['password'];
 
-    // Check credentials using prepared statements to prevent SQL Injection
-    $stmt = $conn->prepare("SELECT * FROM admin_users WHERE username=? AND password_hash=?");
-    $stmt->bind_param("ss", $user, $pass);
-    $stmt->execute();
-    $result = $stmt->get_result();
-
-    if ($result->num_rows > 0) {
-        $_SESSION['admin_logged_in'] = true;
-        header("Location: dashboard.php");
-        exit();
-    } else {
-        $error = "Invalid Username or Password!";
+    // Rate limiting: max 5 attempts per 5 minutes
+    if (!isset($_SESSION['login_attempts'])) {
+        $_SESSION['login_attempts'] = 0;
+        $_SESSION['last_attempt_time'] = time();
     }
-    $stmt->close();
+    
+    if ($_SESSION['login_attempts'] >= 5 && (time() - $_SESSION['last_attempt_time']) < 300) {
+        $error = "Too many failed attempts. Please try again in 5 minutes.";
+    } else {
+        // Reset attempts if 5 minutes have passed
+        if ((time() - $_SESSION['last_attempt_time']) >= 300) {
+            $_SESSION['login_attempts'] = 0;
+        }
+
+        // Check credentials using prepared statements to prevent SQL Injection
+        $stmt = $conn->prepare("SELECT * FROM admin_users WHERE username=?");
+        $stmt->bind_param("s", $user);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        if ($result->num_rows > 0) {
+            $row = $result->fetch_assoc();
+            if (password_verify($pass, $row['password_hash'])) {
+                $_SESSION['admin_logged_in'] = true;
+                $_SESSION['login_attempts'] = 0; // Reset on success
+                header("Location: dashboard.php");
+                exit();
+            } else {
+                $_SESSION['login_attempts']++;
+                $_SESSION['last_attempt_time'] = time();
+                $error = "Invalid Username or Password!";
+            }
+        } else {
+            $_SESSION['login_attempts']++;
+            $_SESSION['last_attempt_time'] = time();
+            $error = "Invalid Username or Password!";
+        }
+        $stmt->close();
+    }
 }
 ?>
 

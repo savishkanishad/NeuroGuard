@@ -4,6 +4,9 @@
 // Copy to config.php and fill in your real credentials.
 // ============================================================
 
+// --- API SECURITY ---
+define('API_KEY', 'your_secure_api_key_here'); // Used for machine-to-machine authentication
+
 // --- PRODUCTION ---
 define('DB_HOST_PROD', 'your_production_host');
 define('DB_USER_PROD', 'your_production_db_user');

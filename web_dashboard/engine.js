@@ -117,7 +117,7 @@ function getHorizontalRatio(iris, corner1, corner2) {
 
 async function syncToDB(alertType) {
   const now = Date.now();
-  if (isSyncing) return; // Strict lock
+  if (isSyncing) return;
   if (now - lastSyncTimes[alertType] < SYNC_COOLDOWN) return;
 
   isSyncing = true;
@@ -125,9 +125,10 @@ async function syncToDB(alertType) {
   console.log(`[NeuroGuard] Sending ${alertType} alert...`);
 
   const formData = new FormData();
-  formData.append('driver_id', '1');
-  formData.append('session_id', '1');
+  formData.append('driver_id', window.DRIVER_ID || '1');
+  formData.append('session_id', window.SESSION_ID || '1');
   formData.append('alert_type', alertType);
+  formData.append('api_key', 'NgPro2026_xYz98!');
 
   try {
     const response = await fetch('log_alert.php', { method: 'POST', body: formData });
@@ -194,7 +195,7 @@ async function predictWebcam() {
     } else { isYawnOpen = false; }
 
     // Check for Distracted
-    const isAway = (gaze < 0.25 || gaze > 0.75) || (turn < 0.35 || turn > 0.65);
+    const isAway = (gaze < GAZE_MIN || gaze > GAZE_MAX) || (turn < 0.35 || turn > 0.65);
     if (isAway) {
       if (!isDistracted) { distractStartTime = now; isDistracted = true; }
       if (now - distractStartTime > DISTRACT_WAIT_TIME) detectedType = "Distracted";
@@ -236,4 +237,28 @@ async function predictWebcam() {
   window.requestAnimationFrame(predictWebcam);
 }
 
-initialize();
+export async function startEngine(driverId) {
+  window.DRIVER_ID = driverId;
+  engineStatus.textContent = "Creating Session...";
+  try {
+    const formData = new FormData();
+    formData.append('driver_id', driverId);
+    formData.append('api_key', 'NgPro2026_xYz98!');
+    const res = await fetch('start_session.php', { method: 'POST', body: formData });
+    const text = await res.text();
+    const sessionId = parseInt(text.trim(), 10);
+    if (!isNaN(sessionId)) {
+      window.SESSION_ID = String(sessionId);
+      console.log("[NeuroGuard] Started session:", window.SESSION_ID);
+    } else {
+      console.error("[NeuroGuard] Bad session response:", text);
+      window.SESSION_ID = '1';
+    }
+  } catch(e) {
+    console.error("[NeuroGuard] Failed to start session", e);
+    window.SESSION_ID = '1';
+  }
+
+  engineStatus.textContent = "Calibration...";
+  initialize();
+}

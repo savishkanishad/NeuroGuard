@@ -1,9 +1,22 @@
 <?php
 header("Access-Control-Allow-Origin: *");
+header("Access-Control-Allow-Headers: X-API-Key, Content-Type");
+header("Access-Control-Allow-Methods: POST, OPTIONS");
 require_once 'db_config.php';
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit();
+}
 
 if ($conn->connect_error) {
     die("Connection failed: " . $conn->connect_error);
+}
+
+$provided_key = $_SERVER['HTTP_X_API_KEY'] ?? ($_POST['api_key'] ?? '');
+if ($provided_key !== API_KEY) {
+    http_response_code(403);
+    die("Error: Unauthorized. Invalid or missing API Key.");
 }
 
 // Check if data is coming from Python

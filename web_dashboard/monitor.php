@@ -4,6 +4,15 @@ if (!isset($_SESSION['admin_logged_in'])) {
     header("Location: index.php");
     exit();
 }
+require_once 'db_config.php';
+
+$drivers_result = $conn->query("SELECT driver_id, full_name FROM drivers ORDER BY full_name ASC");
+$drivers = [];
+if ($drivers_result) {
+    while($row = $drivers_result->fetch_assoc()) {
+        $drivers[] = $row;
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -162,11 +171,38 @@ if (!isset($_SESSION['admin_logged_in'])) {
             position: absolute;
             inset: 0;
             background: var(--bg-color);
-            display: flex;
+            display: none;
             flex-direction: column;
             justify-content: center;
             align-items: center;
             z-index: 100;
+        }
+
+        #driver-selection-overlay {
+            position: absolute;
+            inset: 0;
+            background: var(--bg-color);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 150;
+        }
+
+        .driver-select {
+            padding: 12px 20px;
+            font-size: 16px;
+            border-radius: 8px;
+            margin-bottom: 25px;
+            background: var(--overlay-bg);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.2);
+            min-width: 250px;
+            outline: none;
+            font-family: 'Inter', sans-serif;
+        }
+        .driver-select:focus {
+            border-color: var(--accent-blue);
         }
 
         .loader {
@@ -222,6 +258,17 @@ if (!isset($_SESSION['admin_logged_in'])) {
     </style>
 </head>
 <body>
+    <div id="driver-selection-overlay">
+        <h2 style="margin-bottom: 20px;">Select Driver</h2>
+        <select id="driver-select" class="driver-select">
+            <option value="">-- Choose a Driver --</option>
+            <?php foreach($drivers as $d): ?>
+                <option value="<?= $d['driver_id'] ?>"><?= htmlspecialchars($d['full_name']) ?></option>
+            <?php endforeach; ?>
+        </select>
+        <button id="start-monitor-btn" class="nv-btn" style="padding: 12px 30px; font-size: 16px;">Start Monitoring</button>
+    </div>
+
     <div id="loading-overlay">
         <span class="loader"></span>
         <p style="margin-top: 20px; font-weight: 600;">Initializing AI Engine...</p>
@@ -257,6 +304,19 @@ if (!isset($_SESSION['admin_logged_in'])) {
 
     <!-- MediaPipe Libraries -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js" crossorigin="anonymous"></script>
-    <script src="engine.js" type="module"></script>
+    <script type="module">
+        import { startEngine } from './engine.js';
+        
+        document.getElementById('start-monitor-btn').addEventListener('click', () => {
+            const driverId = document.getElementById('driver-select').value;
+            if (!driverId) {
+                alert("Please select a driver first.");
+                return;
+            }
+            document.getElementById('driver-selection-overlay').style.display = 'none';
+            document.getElementById('loading-overlay').style.display = 'flex';
+            startEngine(driverId);
+        });
+    </script>
 </body>
 </html>

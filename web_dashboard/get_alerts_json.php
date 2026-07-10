@@ -1,7 +1,14 @@
 <?php
+session_start();
 header('Content-Type: application/json');
-require_once 'db_config.php';
 
+if (!isset($_SESSION['admin_logged_in'])) {
+    http_response_code(403);
+    echo json_encode(['error' => 'Unauthorized']);
+    exit();
+}
+
+require_once 'db_config.php';
 // Count total alerts for today
 $count_today = $conn->query("SELECT COUNT(*) as total FROM alerts WHERE DATE(timestamp) = CURDATE()")->fetch_assoc();
 

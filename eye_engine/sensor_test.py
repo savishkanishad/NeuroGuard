@@ -32,7 +32,7 @@ DRIVER_ID = 1
 # Detection sensitivities
 EYE_THRESH   = 0.23
 MOUTH_THRESH = 0.60
-GAZE_MIN, GAZE_MAX = 0.25, 0.75   # horizontal safe-zone
+GAZE_MIN, GAZE_MAX = 0.30, 0.70   # horizontal safe-zone
 TURN_MIN, TURN_MAX = 0.35, 0.65   # head-turn safe-zone
 
 # Condition must persist this long before it counts
@@ -50,16 +50,17 @@ SYNC_COOLDOWN      = 10.0  # minimum gap between DB writes for the same alert ty
 # ─────────────────────────────────────────────────────────────────────────────
 def get_new_session(driver_id: int) -> int:
     url  = "http://localhost/neuroguard_api/start_session.php"
+    # Fallback if neuroguard_api is not the right path. We'll use relative path if possible, but python needs absolute.
+    # We will assume localhost is right for the python script for now.
     data = urllib.parse.urlencode({"driver_id": driver_id}).encode()
+    req = urllib.request.Request(url, data=data, headers={'X-API-Key': 'NgPro2026_xYz98!'})
     try:
-        with urllib.request.urlopen(
-            urllib.request.Request(url, data=data), timeout=2
-        ) as resp:
+        with urllib.request.urlopen(req, timeout=2) as resp:
             new_id = resp.read().decode().strip()
             print(f"🚀  Session started — ID: {new_id}")
             return int(new_id)
-    except Exception:
-        print("⚠️   Could not reach session API — defaulting to session 1")
+    except Exception as e:
+        print(f"⚠️   Could not reach session API ({e}) — defaulting to session 1")
         return 1
 
 SESSION_ID = get_new_session(DRIVER_ID)
@@ -91,7 +92,7 @@ def sync_to_db(alert_type: str) -> None:
                 "alert_type": alert_type,
             }
             data = urllib.parse.urlencode(payload).encode()
-            req  = urllib.request.Request(API_URL, data=data)
+            req  = urllib.request.Request(API_URL, data=data, headers={'X-API-Key': 'NgPro2026_xYz98!'})
             with urllib.request.urlopen(req, timeout=1.5) as resp:
                 print(f"[DB] {alert_type} → {resp.read().decode(errors='ignore')}")
         except Exception as exc:
