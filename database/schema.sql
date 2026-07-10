@@ -21,6 +21,16 @@ SET time_zone = "+00:00";
 -- Database: `neuroguard_db`
 --
 
+-- ============================================================
+-- Drop existing tables first to avoid tablespace conflicts
+-- ============================================================
+SET FOREIGN_KEY_CHECKS = 0;
+DROP TABLE IF EXISTS `alerts`;
+DROP TABLE IF EXISTS `sessions`;
+DROP TABLE IF EXISTS `drivers`;
+DROP TABLE IF EXISTS `admin_users`;
+SET FOREIGN_KEY_CHECKS = 1;
+
 -- --------------------------------------------------------
 
 --
