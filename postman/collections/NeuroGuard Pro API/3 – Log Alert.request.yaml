@@ -1,0 +1,38 @@
+$kind: http-request
+description: |-
+  Logs a driver alert. Includes server-side 10-second debounce to prevent duplicate alerts.
+
+  Expected responses:
+  - 'Success'                          → alert inserted
+  - 'Ignored: Duplicate alert within 10s window'  → debounce triggered
+  - 'SQL Error: ...'                   → DB constraint failed
+url: "{{base_url}}/log_alert.php"
+method: POST
+body:
+  type: urlencoded
+  content:
+    - key: driver_id
+      value: "1"
+      description: Must match a valid driver_id in the drivers table
+    - key: session_id
+      value: "{{session_id}}"
+      description: Auto-filled from Start Session response. Or enter manually.
+    - key: alert_type
+      value: Drowsy
+      description: "Options: Drowsy (High severity) | Yawning | Distracted (Medium severity)"
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('Status is 200', function () {
+          pm.response.to.have.status(200);
+      });
+
+      pm.test('Response is Success or Debounce (not a SQL error)', function () {
+          const body = pm.response.text();
+          pm.expect(body).to.not.include('SQL Error');
+          pm.expect(body).to.not.include('Connection failed');
+          const valid = ['Success', 'Ignored: Duplicate alert within 10s window'];
+          pm.expect(valid.some(v => body.includes(v))).to.be.true;
+      });
+    language: text/javascript
+order: 3000

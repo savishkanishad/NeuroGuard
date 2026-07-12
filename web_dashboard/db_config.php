@@ -29,12 +29,21 @@ if ($is_production) {
     $db_name = DB_NAME_LOCAL;
 }
 
-$conn = new mysqli($host, $user, $pass, $db_name);
+$conn = null;
+$DB_ERROR = null;
 
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
+try {
+    $conn = new mysqli($host, $user, $pass, $db_name);
+    if ($conn->connect_error) {
+        throw new Exception($conn->connect_error);
+    }
+    $conn->query("SET time_zone = '+05:30'");
+} catch (Exception $e) {
+    $DB_ERROR = $e->getMessage();
+    $conn = null;
 }
 
-// Set MySQL timezone to match local timezone
-$conn->query("SET time_zone = '+05:30'");
+if (!defined('DB_AVAILABLE')) {
+    define('DB_AVAILABLE', $conn !== null);
+}
 ?>

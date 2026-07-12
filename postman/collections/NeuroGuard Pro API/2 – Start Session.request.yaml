@@ -1,0 +1,35 @@
+$kind: http-request
+description: |-
+  Creates a new Active session for a driver.
+  Returns the new session_id as a plain integer.
+
+  The returned session_id is auto-saved to the `session_id` variable for use in the next request.
+url: "{{base_url}}/start_session.php"
+method: POST
+body:
+  type: urlencoded
+  content:
+    - key: driver_id
+      value: "1"
+      description: ID of an existing driver in the drivers table
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('Status is 200', function () {
+          pm.response.to.have.status(200);
+      });
+
+      pm.test('Response is a valid session_id (integer)', function () {
+          const id = parseInt(pm.response.text());
+          pm.expect(id).to.be.a('number');
+          pm.expect(id).to.be.greaterThan(0);
+      });
+
+      // Auto-save session_id for use in the Log Alert request
+      const id = parseInt(pm.response.text());
+      if (!isNaN(id)) {
+          pm.collectionVariables.set('session_id', id);
+          console.log('Saved session_id:', id);
+      }
+    language: text/javascript
+order: 2000

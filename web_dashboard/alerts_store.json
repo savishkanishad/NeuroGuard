@@ -1,0 +1,13 @@
+[
+    {
+        "alert_id": 1783713763,
+        "driver_id": "1",
+        "session_id": "1",
+        "alert_type": "Drowsy",
+        "severity": "High",
+        "latitude": "6.927100",
+        "longitude": "79.861200",
+        "timestamp": "2026-07-11 01:32:43",
+        "full_name": "Fallback Driver"
+    }
+]

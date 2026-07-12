@@ -61,8 +61,10 @@ CREATE TABLE `alerts` (
   `alert_id` int(11) NOT NULL,
   `session_id` int(11) NOT NULL,
   `driver_id` int(11) NOT NULL,
-  `alert_type` enum('Drowsy','Yawn','Distracted') NOT NULL,
-  `severity` enum('Low','Medium','High') DEFAULT 'Medium',
+  `alert_type` enum('Drowsy','Yawn','Distracted','Microsleep') NOT NULL,
+  `severity` enum('Low','Medium','High','Critical') DEFAULT 'Medium',
+  `latitude` decimal(10,8) DEFAULT NULL,
+  `longitude` decimal(11,8) DEFAULT NULL,
   `timestamp` datetime DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 

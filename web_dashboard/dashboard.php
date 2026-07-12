@@ -31,6 +31,8 @@ $result = $conn->query($sql);
         <span>🚀 NeuroGuard Pro Dashboard</span>
         <div style="display: flex; gap: 10px;">
             <a href="portal.php" class="logout-btn">Launchpad</a>
+            <a href="reports.php" class="logout-btn" style="background: rgba(251, 191, 36, 0.1); color: var(--accent-yellow);">📊 Reports</a>
+            <a href="map.php" class="logout-btn" style="background: rgba(80, 220, 80, 0.1); color: #50dc50;">🗺️ Live Map</a>
             <a href="monitor.php" class="logout-btn" style="background: rgba(56, 189, 248, 0.1); color: var(--accent-blue);">Open Monitor</a>
             <a href="logout.php" class="logout-btn">Logout</a>
         </div>

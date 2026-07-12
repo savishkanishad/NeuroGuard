@@ -1,0 +1,9 @@
+$kind: collection
+description: |-
+  API collection for NeuroGuard Pro web dashboard.
+
+  Set the `base_url` variable to:
+  - Local:      http://localhost/web_dashboard
+  - Production: https://your-domain.infinityfree.com/web_dashboard
+variables:
+  base_url: http://localhost/web_dashboard

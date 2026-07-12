@@ -2,6 +2,14 @@
 session_start();
 require_once 'db_config.php';
 
+// Session Timeout: 30 minutes
+$timeout_duration = 1800;
+if (isset($_SESSION['LAST_ACTIVITY']) && (time() - $_SESSION['LAST_ACTIVITY']) > $timeout_duration) {
+    session_unset();
+    session_destroy();
+    session_start();
+}
+$_SESSION['LAST_ACTIVITY'] = time();
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $user = $_POST['username'];
     $pass = $_POST['password'];
@@ -29,6 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($result->num_rows > 0) {
             $row = $result->fetch_assoc();
             if (password_verify($pass, $row['password_hash'])) {
+                session_regenerate_id(true); // Prevent session fixation
                 $_SESSION['admin_logged_in'] = true;
                 $_SESSION['login_attempts'] = 0; // Reset on success
                 header("Location: dashboard.php");

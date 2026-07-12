@@ -1,0 +1,14 @@
+# Use this workspace to collaborate
+workspace:
+  id: 2a8a8f62-1416-4cab-89a8-e2f4877c3dc5
+
+localResources:
+  collections:
+    - ..\NeuroGuard.postman_collection.json
+    - ..\web_dashboard\NeuroGuard.postman_collection.json
+  docs:
+    - ..\README.md
+
+cloudResources:
+  collections:
+    ..\postman\collections\NeuroGuard Pro API: 81fcf9a2-998a-44f3-9d42-357bf2f8f1b3

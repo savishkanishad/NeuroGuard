@@ -160,6 +160,7 @@ if ($drivers_result) {
         .alert-drowsy { background: var(--accent-red); color: white; }
         .alert-yawn { background: #fbbf24; color: #78350f; }
         .alert-distracted { background: #3b82f6; color: white; }
+        .alert-microsleep { background: linear-gradient(135deg, #7c3aed, #dc2626); color: white; }
 
         @keyframes pulse {
             0% { transform: translateX(-50%) scale(1); }

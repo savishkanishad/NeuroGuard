@@ -3,6 +3,10 @@ import time
 import threading
 import urllib.parse
 import urllib.request
+import sqlite3
+import json
+from collections import deque
+from dotenv import load_dotenv
 
 import cv2
 import numpy as np
@@ -10,50 +14,94 @@ from scipy.spatial import distance as dist
 from pygame import mixer
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  1.  SOUND SETUP
+#  0.  ENVIRONMENT & CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
-BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BASE_DIR, ".env"))
+
+API_URL   = os.getenv("API_URL", "http://localhost/neuroguard_api/log_alert.php")
+API_KEY   = os.getenv("API_KEY", "NgPro2026_xYz98!")
+DRIVER_ID = int(os.getenv("DRIVER_ID", 1))
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  1.  SOUND SETUP (ESCALATION)
+# ─────────────────────────────────────────────────────────────────────────────
 ALARM_PATH = os.path.join(BASE_DIR, "alarm.wav")
+CHIME_PATH = os.path.join(BASE_DIR, "chime.wav")
 
 mixer.init()
-alarm_sound = None
-if os.path.exists(ALARM_PATH):
-    alarm_sound = mixer.Sound(ALARM_PATH)
-    print("✅  Alarm loaded")
-else:
-    print(f"❌  alarm.wav not found at {ALARM_PATH}")
+alarm_sound = mixer.Sound(ALARM_PATH) if os.path.exists(ALARM_PATH) else None
+chime_sound = mixer.Sound(CHIME_PATH) if os.path.exists(CHIME_PATH) else alarm_sound
+
+if alarm_sound: print("✅  Alarm loaded")
+if os.path.exists(CHIME_PATH): print("✅  Chime loaded")
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  2.  CONFIG & THRESHOLDS  (kept in sync with engine.js)
+#  2.  CONFIG & THRESHOLDS
 # ─────────────────────────────────────────────────────────────────────────────
-API_URL   = "http://localhost/neuroguard_api/log_alert.php"
-DRIVER_ID = 1
+EYE_THRESH_DEFAULT = 0.23   
+MOUTH_THRESH       = 0.60
+GAZE_MIN, GAZE_MAX = 0.30, 0.70   
+TURN_MIN, TURN_MAX = 0.35, 0.65   
+NOD_THRESH  = 0.60    
+TILT_THRESH = 0.08    
 
-# Detection sensitivities
-EYE_THRESH   = 0.23
-MOUTH_THRESH = 0.60
-GAZE_MIN, GAZE_MAX = 0.30, 0.70   # horizontal safe-zone
-TURN_MIN, TURN_MAX = 0.35, 0.65   # head-turn safe-zone
+CALIBRATION_DURATION = 10.0   
 
-# Condition must persist this long before it counts
-DROWSY_WAIT_TIME   = 1.0   # seconds
+EAR_BUF_LEN   = 5    
+MAR_BUF_LEN   = 8    
+GAZE_BUF_LEN  = 6    
+TURN_BUF_LEN  = 6    
+PITCH_BUF_LEN = 5    
+ROLL_BUF_LEN  = 5    
+
+DROWSY_WAIT_TIME   = 1.0    
 YAWN_WAIT_TIME     = 0.7
 DISTRACT_WAIT_TIME = 1.5
+NOD_WAIT_TIME      = 1.2    
 
-# ── Alert state-machine (direct port from engine.js) ──────────────────────
-ALERT_LATCH_TIME   = 2.0   # alert stays active this long after condition clears
-RETRIGGER_COOLDOWN = 5.0   # silence period before same alert can fire again
-SYNC_COOLDOWN      = 10.0  # minimum gap between DB writes for the same alert type
+ALERT_LATCH_TIME   = 2.0    
+SYNC_COOLDOWN      = 10.0   
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  3.  SESSION & DATABASE SYNC
+#  3.  OFFLINE QUEUE & DATABASE SYNC
 # ─────────────────────────────────────────────────────────────────────────────
+QUEUE_DB_PATH = os.path.join(BASE_DIR, "offline_queue.db")
+
+def init_offline_db():
+    with sqlite3.connect(QUEUE_DB_PATH) as conn:
+        conn.execute('''CREATE TABLE IF NOT EXISTS queue
+                        (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                         payload TEXT, 
+                         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+init_offline_db()
+
+def offline_sync_worker():
+    while True:
+        time.sleep(30)
+        try:
+            with sqlite3.connect(QUEUE_DB_PATH) as conn:
+                cursor = conn.execute("SELECT id, payload FROM queue ORDER BY timestamp ASC LIMIT 50")
+                rows = cursor.fetchall()
+                for row_id, payload_json in rows:
+                    payload = json.loads(payload_json)
+                    data = urllib.parse.urlencode(payload).encode()
+                    req = urllib.request.Request(API_URL, data=data, headers={'X-API-Key': API_KEY})
+                    with urllib.request.urlopen(req, timeout=5) as resp:
+                        conn.execute("DELETE FROM queue WHERE id=?", (row_id,))
+                        conn.commit()
+                        print(f"[Queue] Synced offline alert ID {row_id}")
+        except Exception as e:
+            pass # Keep quiet, retry later
+
+threading.Thread(target=offline_sync_worker, daemon=True).start()
+
 def get_new_session(driver_id: int) -> int:
-    url  = "http://localhost/neuroguard_api/start_session.php"
-    # Fallback if neuroguard_api is not the right path. We'll use relative path if possible, but python needs absolute.
-    # We will assume localhost is right for the python script for now.
-    data = urllib.parse.urlencode({"driver_id": driver_id}).encode()
-    req = urllib.request.Request(url, data=data, headers={'X-API-Key': 'NgPro2026_xYz98!'})
+    # URL path logic just to find correct host based on API_URL
+    host = API_URL.rsplit('/', 1)[0]
+    session_url = f"{host}/start_session.php"
+    data = urllib.parse.urlencode({"driver_id": driver_id, "api_key": API_KEY}).encode()
+    req  = urllib.request.Request(session_url, data=data)
     try:
         with urllib.request.urlopen(req, timeout=2) as resp:
             new_id = resp.read().decode().strip()
@@ -65,372 +113,368 @@ def get_new_session(driver_id: int) -> int:
 
 SESSION_ID = get_new_session(DRIVER_ID)
 
-# ── isSyncing equivalent: threading.Lock (non-blocking acquire) ──────────
 _sync_lock       = threading.Lock()
-_last_sync_times = {"Drowsy": 0.0, "Yawn": 0.0, "Distracted": 0.0}
+_last_sync_times = {"Drowsy": 0.0, "Yawn": 0.0, "Distracted": 0.0, "Microsleep": 0.0}
 
-def sync_to_db(alert_type: str) -> None:
-    """
-    Fire-and-forget DB write.
-    Skipped immediately if:
-      • another write is already in-flight  (_sync_lock busy)
-      • this alert type is still in its SYNC_COOLDOWN window
-    Mirrors the isSyncing + lastSyncTimes guard in engine.js syncToDB().
-    """
+def sync_to_db(alert_type: str, severity: str) -> None:
     now = time.time()
     if now - _last_sync_times.get(alert_type, 0.0) < SYNC_COOLDOWN:
         return
-    if not _sync_lock.acquire(blocking=False):   # strict lock — skip if busy
+    if not _sync_lock.acquire(blocking=False):
         return
 
     def _worker() -> None:
         try:
             _last_sync_times[alert_type] = time.time()
+            
+            # Mock GPS coordinates (Colombo area, drifting slightly)
+            mock_lat = 6.9271 + (np.random.rand() - 0.5) * 0.05
+            mock_lng = 79.8612 + (np.random.rand() - 0.5) * 0.05
+
             payload = {
                 "driver_id":  DRIVER_ID,
                 "session_id": SESSION_ID,
                 "alert_type": alert_type,
+                "severity": severity,
+                "latitude": round(mock_lat, 6),
+                "longitude": round(mock_lng, 6)
             }
+            
             data = urllib.parse.urlencode(payload).encode()
-            req  = urllib.request.Request(API_URL, data=data, headers={'X-API-Key': 'NgPro2026_xYz98!'})
-            with urllib.request.urlopen(req, timeout=1.5) as resp:
-                print(f"[DB] {alert_type} → {resp.read().decode(errors='ignore')}")
+            req  = urllib.request.Request(API_URL, data=data, headers={'X-API-Key': API_KEY})
+            with urllib.request.urlopen(req, timeout=2.0) as resp:
+                print(f"[DB] {alert_type} ({severity}) → {resp.read().decode(errors='ignore').strip()}")
         except Exception as exc:
-            print(f"[DB] Sync error: {exc}")
+            print(f"[DB] Sync error, queueing offline: {exc}")
+            with sqlite3.connect(QUEUE_DB_PATH) as conn:
+                conn.execute("INSERT INTO queue (payload) VALUES (?)", (json.dumps(payload),))
         finally:
             _sync_lock.release()
 
     threading.Thread(target=_worker, daemon=True).start()
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  4.  MATH HELPERS
+#  4.  ROLLING BUFFER & MATH HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
+class RollingBuffer:
+    def __init__(self, maxlen: int):
+        self._buf = deque(maxlen=maxlen)
+
+    def push(self, value: float) -> None:
+        self._buf.append(value)
+
+    def mean(self) -> float:
+        return float(np.mean(self._buf)) if self._buf else 0.0
+
 def eye_aspect_ratio(eye_coords: list) -> float:
     A = dist.euclidean(eye_coords[1], eye_coords[5])
     B = dist.euclidean(eye_coords[2], eye_coords[4])
     C = dist.euclidean(eye_coords[0], eye_coords[3])
     return (A + B) / (2.0 * C) if C != 0 else 0.0
 
-
 def get_horizontal_ratio(iris, corner1, corner2) -> float:
-    """
-    Returns iris position in [0.0 – 1.0] relative to the eye corners.
-
-    FIX: uses min/max to determine left/right, so corner argument order
-    no longer matters — eliminates the swap bug in the original code and
-    mirrors the engine.js getHorizontalRatio() rewrite exactly.
-    """
     left_x  = min(corner1.x, corner2.x)
     right_x = max(corner1.x, corner2.x)
     width   = right_x - left_x
-    if width < 0.005:
-        return 0.5
+    if width < 0.005: return 0.5
     return max(0.0, min(1.0, (iris.x - left_x) / width))
 
+def head_pitch(lm) -> float:
+    forehead_y = lm[10].y
+    nose_y     = lm[1].y
+    chin_y     = lm[152].y
+    span       = chin_y - forehead_y
+    if abs(span) < 0.01: return 0.5
+    return max(0.0, min(1.0, (nose_y - forehead_y) / span))
+
+def head_roll(lm) -> float:
+    left_outer_y  = lm[263].y
+    right_outer_y = lm[33].y
+    eye_span_x    = abs(lm[263].x - lm[33].x)
+    if eye_span_x < 0.01: return 0.0
+    return (left_outer_y - right_outer_y) / eye_span_x
+
 # ─────────────────────────────────────────────────────────────────────────────
-#  5.  MEDIAPIPE SETUP  (fixed imports — Tasks Python API)
+#  5.  MEDIAPIPE SETUP
 # ─────────────────────────────────────────────────────────────────────────────
 import mediapipe as mp
 from mediapipe.tasks.python.core.base_options import BaseOptions
 from mediapipe.tasks.python import vision as mp_vision
 
 MODEL_PATH = os.path.join(BASE_DIR, "face_landmarker.task")
-
 _options = mp_vision.FaceLandmarkerOptions(
     base_options=BaseOptions(model_asset_path=MODEL_PATH),
-    running_mode=mp_vision.RunningMode.VIDEO,   # VIDEO mode = temporal smoothing
+    running_mode=mp_vision.RunningMode.VIDEO,
     num_faces=1,
     output_face_blendshapes=False,
 )
 landmarker = mp_vision.FaceLandmarker.create_from_options(_options)
 print("✅  FaceLandmarker loaded")
 
-# Landmark indices — MediaPipe 468-pt mesh + iris extensions
 LEFT_EYE  = [362, 385, 387, 263, 373, 380]
 RIGHT_EYE = [33,  160, 158, 133, 153, 144]
 MOUTH     = [13, 14, 78, 308]
 L_IRIS, R_IRIS = 468, 473
-L_IN,  L_OUT   = 362, 263    # inner, outer corners of left eye
-R_IN,  R_OUT   = 133,  33    # inner, outer corners of right eye
+L_IN,  L_OUT   = 362, 263
+R_IN,  R_OUT   = 133,  33
 NOSE           = 1
-LEFT_F         = 234          # left face silhouette
-RIGHT_F        = 454          # right face silhouette
+LEFT_F         = 234
+RIGHT_F        = 454
+FOREHEAD       = 10
+CHIN           = 152
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  6.  MUTABLE DETECTION STATE
-# ─────────────────────────────────────────────────────────────────────────────
-# Temporal tracking (same as before)
-drowsy_start_time  = 0.0;  IS_EYE_CLOSED  = False
-yawn_start_time    = 0.0;  IS_YAWN_OPEN   = False
-distract_start_time = 0.0; IS_DISTRACTED  = False
-
-# ── Alert state-machine (ported from engine.js) ───────────────────────────
-active_alert   = None          # currently latched alert type, or None
-alert_end_time = 0.0           # wall-clock time when latch expires
-cooldowns      = {"Drowsy": 0.0, "Yawn": 0.0, "Distracted": 0.0}
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  7.  VISUAL HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
-# Alert banner styles  {type: (label, bgr_colour)}
-ALERT_STYLE = {
-    "Drowsy":     ("⚠  DROWSY!",        (0,   0,   220)),
-    "Yawn":       ("⚠  YAWNING!",       (0,   200, 255)),
-    "Distracted": ("⚠  LOOKING AWAY!",  (220, 130,  0)),
-}
-
-CLR_GREEN = (80,  220, 80)
-CLR_RED   = (60,  60,  240)
-CLR_GRAY  = (160, 160, 160)
-CLR_WHITE = (255, 255, 255)
-CLR_ICE   = (220, 200, 80)   # cooldown indicator (blue-ish)
-
-FONT = cv2.FONT_HERSHEY_SIMPLEX
-
-# ── Night-vision resources (created once, reused every frame) ─────────────
-# CLAHE: adaptive contrast enhancement — far better than a flat alpha/beta
-# lift for faces in low-light where the histogram is clumped in the darks.
-_clahe       = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
-_nv_vignette = None   # built lazily on first NV frame; cached afterward
-
-
-def apply_night_vision(frame: np.ndarray) -> np.ndarray:
-    """
-    Full NVG-style filter pipeline — mirrors the web dashboard CSS chain:
-
-        brightness(1.5)  contrast(1.2)  sepia(100%)
-        hue-rotate(90deg)  saturate(3)
-
-    Processing steps
-    ────────────────
-    1. Grayscale   — desaturate (sepia collapses to mono base)
-    2. CLAHE       — adaptive contrast; recovers shadow detail that a simple
-                     alpha-boost would clip or lose
-    3. Brightness  — convertScaleAbs alpha=1.5  (brightness(1.5))
-       Contrast    — convertScaleAbs beta=15     (contrast(1.2))
-    4. Green merge — B=0, G=enhanced, R=0
-                     (sepia + hue-rotate(90deg) + saturate(3) → green dominant)
-    5. Scanlines   — every other row dimmed 15 %  (classic phosphor CRT look)
-    6. Vignette    — radial darkening toward edges (built once, cached)
-    """
-    global _nv_vignette
-    h, w = frame.shape[:2]
-
-    # ── Build / refresh vignette mask (lazy, cached per resolution) ──────
-    if _nv_vignette is None or _nv_vignette.shape != (h, w):
-        cy, cx       = h / 2.0, w / 2.0
-        Y, X         = np.ogrid[:h, :w]
-        radius       = np.sqrt(((X - cx) / cx) ** 2 + ((Y - cy) / cy) ** 2)
-        _nv_vignette = np.clip(1.0 - radius * 0.55, 0.0, 1.0).astype(np.float32)
-
-    # ── Steps 1 + 2: grayscale → CLAHE ───────────────────────────────────
-    gray     = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    enhanced = _clahe.apply(gray)
-
-    # ── Step 3: brightness(1.5) + contrast(1.2) ──────────────────────────
-    enhanced = cv2.convertScaleAbs(enhanced, alpha=1.5, beta=15)
-
-    # ── Step 4: green phosphor merge ─────────────────────────────────────
-    zeros = np.zeros_like(enhanced)
-    nv    = cv2.merge([zeros, enhanced, zeros])
-
-    # ── Step 5: scanlines — dim every other row by 15 % ──────────────────
-    nv[::2] = (nv[::2] * 0.85).astype(np.uint8)
-
-    # ── Step 6: vignette ─────────────────────────────────────────────────
-    nv = (nv.astype(np.float32) * _nv_vignette[:, :, np.newaxis]).astype(np.uint8)
-
-    return nv
-
-
-def draw_hud(frame: np.ndarray, h: int,
-             ear: float, mar: float, gaze: float, turn: float,
-             now: float) -> None:
-    """
-    Bottom-left HUD panel — mirrors engine.js engineStatus innerHTML block.
-    Each metric shown green when safe, red when alarming.
-    Cooldown ❄ indicator shown per-alert-type when active.
-    """
-    rows = [
-        ("EYES :", ear,  ear < EYE_THRESH),
-        ("MOUTH:", mar,  mar > MOUTH_THRESH),
-        ("GAZE :", gaze, gaze < GAZE_MIN or gaze > GAZE_MAX),
-        ("TURN :", turn, turn < TURN_MIN  or turn > TURN_MAX),
-    ]
-    for i, (label, val, warn) in enumerate(rows):
-        y   = h - 14 - (len(rows) - 1 - i) * 22
-        col = CLR_RED if warn else CLR_GREEN
-        cv2.putText(frame, label,        (12,  y), FONT, 0.50, CLR_GRAY,  1)
-        cv2.putText(frame, f"{val:.2f}", (100, y), FONT, 0.50, col,       2)
-
-    # ❄ per-type cooldown countdown (right side)
-    cd_y = h - 14
-    for atype, t in cooldowns.items():
-        remaining = t - now
-        if remaining > 0:
-            txt = f"[{atype} ❄ {remaining:.1f}s]"
-            cv2.putText(frame, txt, (frame.shape[1] - 200, cd_y),
-                        FONT, 0.40, CLR_ICE, 1)
-            cd_y -= 18
-
-
-def draw_alert_banner(frame: np.ndarray, w: int, alert_type: str) -> None:
-    label, colour = ALERT_STYLE[alert_type]
-    cv2.rectangle(frame, (0, 0), (w, 58), colour, -1)
-    cv2.putText(frame, label, (w // 2 - 155, 40),
-                cv2.FONT_HERSHEY_DUPLEX, 1.2, CLR_WHITE, 2)
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  8.  MONOTONIC TIMESTAMP HELPER  (VIDEO mode requires strictly increasing ms)
-# ─────────────────────────────────────────────────────────────────────────────
 _last_ts_ms = 0
-
-def next_timestamp_ms() -> int:
+def next_timestamp_ms():
     global _last_ts_ms
     ts = int(time.time() * 1000)
-    if ts <= _last_ts_ms:
-        ts = _last_ts_ms + 1
+    if ts <= _last_ts_ms: ts = _last_ts_ms + 1
     _last_ts_ms = ts
     return ts
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  9.  MAIN DETECTION LOOP
+#  6.  CALIBRATION
 # ─────────────────────────────────────────────────────────────────────────────
-cap     = cv2.VideoCapture(0)
-nv_mode = False
+def calibrate(cap, duration: float = CALIBRATION_DURATION) -> float:
+    print(f"\n👁  CALIBRATION — look straight at the camera for {int(duration)} seconds…")
+    print("Camera warming up...")
+    for _ in range(30):
+        cap.read()
+    time.sleep(0.5)
+    
+    samples = []
+    start = time.time()
 
-print("\n🟢  NeuroGuard Pro running — [Q] Quit   [N] Night-vision\n")
+    while time.time() - start < duration:
+        ret, frame = cap.read()
+        if not ret: continue
+
+        elapsed = time.time() - start
+        h, w = frame.shape[:2]
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+
+        res = landmarker.detect_for_video(mp_img, next_timestamp_ms())
+
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (0, 0), (w, 88), (15, 15, 15), -1)
+        cv2.addWeighted(overlay, 0.78, frame, 0.22, 0, frame)
+
+        bar_w = int((elapsed / duration) * max(1, w - 40))
+        cv2.rectangle(frame, (20, 60), (w - 20, 76), (50, 50, 50), -1)
+        cv2.rectangle(frame, (20, 60), (20 + bar_w, 76), (80, 220, 80), -1)
+        cv2.putText(frame, f"CALIBRATING — keep eyes open  {duration - elapsed:.1f}s", (20, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+
+        if res.face_landmarks:
+            lm = res.face_landmarks[0]
+            coords = [(int(l.x * w), int(l.y * h)) for l in lm]
+            ear = (eye_aspect_ratio([coords[i] for i in LEFT_EYE]) + eye_aspect_ratio([coords[i] for i in RIGHT_EYE])) / 2.0
+            if ear > 0.15: samples.append(ear)
+            cv2.putText(frame, f"EAR={ear:.3f}  samples={len(samples)}", (20, h - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (140, 140, 140), 1)
+
+        cv2.imshow("NeuroGuard Pro Engine", frame)
+        if cv2.waitKey(1) & 0xFF == ord("q"): break
+
+    if len(samples) < 30:
+        return EYE_THRESH_DEFAULT
+
+    mean_ear = float(np.mean(samples))
+    calibrated = round(mean_ear * 0.75, 4)
+    print(f"✅  Calibration done — mean EAR={mean_ear:.3f}  → eye threshold={calibrated:.3f}")
+    return calibrated
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  7.  MUTABLE DETECTION STATE & HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+drowsy_start_time   = 0.0; IS_EYE_CLOSED = False
+yawn_start_time     = 0.0; IS_YAWN_OPEN  = False
+distract_start_time = 0.0; IS_DISTRACTED = False
+nod_start_time      = 0.0; IS_NODDING    = False
+
+active_alert   = None
+alert_end_time = 0.0
+cooldowns      = {"Drowsy": 0.0, "Yawn": 0.0, "Distracted": 0.0, "Microsleep": 0.0}
+
+alert_history = deque(maxlen=20) # Track (timestamp, alert_type) for escalation
+
+_buf_ear   = RollingBuffer(EAR_BUF_LEN)
+_buf_mar   = RollingBuffer(MAR_BUF_LEN)
+_buf_gaze  = RollingBuffer(GAZE_BUF_LEN)
+_buf_turn  = RollingBuffer(TURN_BUF_LEN)
+_buf_pitch = RollingBuffer(PITCH_BUF_LEN)
+_buf_roll  = RollingBuffer(ROLL_BUF_LEN)
+
+ALERT_STYLE = {
+    "Drowsy":     ("⚠  DROWSY!",        (0,   0,   220)),
+    "Yawn":       ("⚠  YAWNING!",       (0,   200, 255)),
+    "Distracted": ("⚠  LOOKING AWAY!",  (220, 130,   0)),
+    "Microsleep": ("⚠  MICROSLEEP!",    (30,   0,  200)),
+}
+CLR_GREEN, CLR_RED, CLR_GRAY, CLR_WHITE, CLR_ICE = (80, 220, 80), (60, 60, 240), (160, 160, 160), (255, 255, 255), (220, 200, 80)
+FONT = cv2.FONT_HERSHEY_SIMPLEX
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  8.  MAIN
+# ─────────────────────────────────────────────────────────────────────────────
+cap = cv2.VideoCapture(0)
+print("\n🟢  NeuroGuard Pro — starting calibration…\n")
+eye_thresh = calibrate(cap, CALIBRATION_DURATION)
+print("\n🎯  Detection active — [Q] Quit | [N] Night Vision\n")
+
+# To track active audio escalation state
+current_audio_level = 0 
+is_night_vision = False
 
 while True:
     ret, frame = cap.read()
-    if not ret:
-        break
+    if not ret: break
 
-    now       = time.time()
-    h, w      = frame.shape[:2]
-    rgb       = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    mp_img    = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-    results   = landmarker.detect_for_video(mp_img, next_timestamp_ms())
+    now  = time.time()
+    h, w = frame.shape[:2]
+    rgb  = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+    results = landmarker.detect_for_video(mp_img, next_timestamp_ms())
 
-    # ── FACE DETECTED ─────────────────────────────────────────────────────
     if results.face_landmarks:
-        lm     = results.face_landmarks[0]
+        lm = results.face_landmarks[0]
         coords = [(int(l.x * w), int(l.y * h)) for l in lm]
 
-        # ── A) COMPUTE METRICS ─────────────────────────────────────────────
-        ear = (eye_aspect_ratio([coords[i] for i in LEFT_EYE]) +
-               eye_aspect_ratio([coords[i] for i in RIGHT_EYE])) / 2.0
-
-        mar = (dist.euclidean(coords[MOUTH[0]], coords[MOUTH[1]]) /
-               dist.euclidean(coords[MOUTH[2]], coords[MOUTH[3]]))
-
-        # Gaze — fixed: min/max inside get_horizontal_ratio; order irrelevant
-        gaze_l   = get_horizontal_ratio(lm[L_IRIS], lm[L_IN], lm[L_OUT])
-        gaze_r   = get_horizontal_ratio(lm[R_IRIS], lm[R_IN], lm[R_OUT])
-        avg_gaze = (gaze_l + gaze_r) / 2.0
-
+        # Raw Metrics
+        raw_ear = (eye_aspect_ratio([coords[i] for i in LEFT_EYE]) + eye_aspect_ratio([coords[i] for i in RIGHT_EYE])) / 2.0
+        raw_mar = dist.euclidean(coords[MOUTH[0]], coords[MOUTH[1]]) / dist.euclidean(coords[MOUTH[2]], coords[MOUTH[3]])
+        raw_gaze = (get_horizontal_ratio(lm[L_IRIS], lm[L_IN], lm[L_OUT]) + get_horizontal_ratio(lm[R_IRIS], lm[R_IN], lm[R_OUT])) / 2.0
+        
         nose_x, left_f_x, right_f_x = lm[NOSE].x, lm[LEFT_F].x, lm[RIGHT_F].x
         span = right_f_x - left_f_x
-        turn = ((nose_x - left_f_x) / span) if span != 0 else 0.5
+        raw_turn = ((nose_x - left_f_x) / span) if span != 0 else 0.5
+        raw_pitch = head_pitch(lm)
+        raw_roll  = head_roll(lm)
 
-        # ── B) TEMPORAL DETECTION with PRIORITY ───────────────────────────
-        #
-        #  Priority order: Drowsy > Yawn > Distracted
-        #  All three conditions are tracked independently.
-        #  Only the highest-priority active condition is reported as
-        #  detected_type — prevents the overwrite bug from engine.js.
-        #
+        # Buffers
+        _buf_ear.push(raw_ear); ear = _buf_ear.mean()
+        _buf_mar.push(raw_mar); mar = _buf_mar.mean()
+        _buf_gaze.push(raw_gaze); avg_gaze = _buf_gaze.mean()
+        _buf_turn.push(raw_turn); turn = _buf_turn.mean()
+        _buf_pitch.push(raw_pitch); pitch = _buf_pitch.mean()
+        _buf_roll.push(raw_roll); roll = _buf_roll.mean()
+
+        # Detection Logic
         detected_type = None
 
-        # Priority 1 — Drowsy
-        if ear < EYE_THRESH:
-            if not IS_EYE_CLOSED:
-                drowsy_start_time = now
-                IS_EYE_CLOSED = True
-            if (now - drowsy_start_time) > DROWSY_WAIT_TIME:
-                detected_type = "Drowsy"
-        else:
-            IS_EYE_CLOSED = False
+        if ear < eye_thresh:
+            if not IS_EYE_CLOSED: drowsy_start_time = now; IS_EYE_CLOSED = True
+            if (now - drowsy_start_time) > DROWSY_WAIT_TIME: detected_type = "Drowsy"
+        else: IS_EYE_CLOSED = False
 
-        # Priority 2 — Yawn  (tracked regardless; only reports if slot free)
+        if (pitch > NOD_THRESH) or (abs(roll) > TILT_THRESH):
+            if not IS_NODDING: nod_start_time = now; IS_NODDING = True
+            if not detected_type and (now - nod_start_time) > NOD_WAIT_TIME: detected_type = "Microsleep"
+        else: IS_NODDING = False
+
         if mar > MOUTH_THRESH:
-            if not IS_YAWN_OPEN:
-                yawn_start_time = now
-                IS_YAWN_OPEN = True
-            if detected_type is None and (now - yawn_start_time) > YAWN_WAIT_TIME:
-                detected_type = "Yawn"
-        else:
-            IS_YAWN_OPEN = False
+            if not IS_YAWN_OPEN: yawn_start_time = now; IS_YAWN_OPEN = True
+            if not detected_type and (now - yawn_start_time) > YAWN_WAIT_TIME: detected_type = "Yawn"
+        else: IS_YAWN_OPEN = False
 
-        # Priority 3 — Distracted
-        is_away = ((avg_gaze < GAZE_MIN or avg_gaze > GAZE_MAX) or
-                   (turn     < TURN_MIN  or turn     > TURN_MAX))
+        is_away = ((avg_gaze < GAZE_MIN or avg_gaze > GAZE_MAX) or (turn < TURN_MIN or turn > TURN_MAX))
         if is_away:
-            if not IS_DISTRACTED:
-                distract_start_time = now
-                IS_DISTRACTED = True
-            if detected_type is None and (now - distract_start_time) > DISTRACT_WAIT_TIME:
-                detected_type = "Distracted"
-        else:
-            IS_DISTRACTED = False
+            if not IS_DISTRACTED: distract_start_time = now; IS_DISTRACTED = True
+            if not detected_type and (now - distract_start_time) > DISTRACT_WAIT_TIME: detected_type = "Distracted"
+        else: IS_DISTRACTED = False
 
-        # ── C) ALERT STATE MACHINE  (direct port of engine.js logic) ──────
-        #
-        #  Step 1 — new alert: fire only if slot is free AND past cooldown
+        # Alert State Machine (Escalation)
         if detected_type and active_alert is None and now > cooldowns[detected_type]:
-            active_alert   = detected_type
+            active_alert = detected_type
             alert_end_time = now + ALERT_LATCH_TIME
-            sync_to_db(active_alert)          # ONE-TIME DB write per activation
+            
+            # Escalation: Count same alerts in the last 60 seconds
+            alert_history.append((now, active_alert))
+            recent_count = sum(1 for t, typ in alert_history if (now - t) <= 60 and typ == active_alert)
+            
+            if recent_count >= 3:
+                severity = "Critical"
+                current_audio_level = 2
+            elif recent_count == 2:
+                severity = "High"
+                current_audio_level = 2
+            else:
+                severity = "High" if active_alert == "Drowsy" else "Medium"
+                current_audio_level = 1
 
-        #  Step 2 — latch extension: keep pushing end-time while condition persists
+            sync_to_db(active_alert, severity)
+
         if detected_type == active_alert:
             alert_end_time = now + ALERT_LATCH_TIME
 
-        #  Step 3 — latch expiry: enter per-type retrigger cooldown
         if active_alert and now > alert_end_time:
-            cooldowns[active_alert] = now + RETRIGGER_COOLDOWN
+            # Dynamic Cooldown based on severity/frequency
+            recent_count = sum(1 for t, typ in alert_history if (now - t) <= 60 and typ == active_alert)
+            cooldowns[active_alert] = now + (15.0 if recent_count >= 2 else 10.0)
             active_alert = None
+            current_audio_level = 0
 
-        # ── D) ALARM AUDIO ─────────────────────────────────────────────────
+        # Audio
         if active_alert:
-            if alarm_sound and not mixer.get_busy():
-                alarm_sound.play(-1)
+            if current_audio_level == 2:
+                if chime_sound: chime_sound.stop()
+                if alarm_sound and not mixer.get_busy(): alarm_sound.play(-1)
+            else:
+                if alarm_sound: alarm_sound.stop()
+                if chime_sound and not mixer.get_busy(): chime_sound.play(-1)
         else:
-            if alarm_sound:
-                alarm_sound.stop()
+            if alarm_sound: alarm_sound.stop()
+            if chime_sound: chime_sound.stop()
 
-        # ── E) VISUAL OVERLAY ──────────────────────────────────────────────
+        # Visuals
         if active_alert:
-            draw_alert_banner(frame, w, active_alert)
+            label, colour = ALERT_STYLE[active_alert]
+            cv2.rectangle(frame, (0, 0), (w, 58), colour, -1)
+            cv2.putText(frame, label, (w // 2 - 155, 40), cv2.FONT_HERSHEY_DUPLEX, 1.2, CLR_WHITE, 2)
+            # Show Escalation Level
+            if current_audio_level == 2:
+                cv2.putText(frame, "ESCALATED", (w - 150, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
 
-        draw_hud(frame, h, ear, mar, avg_gaze, turn, now)
+        # HUD
+        rows = [
+            ("EYES :", ear, ear < eye_thresh), ("MOUTH:", mar, mar > MOUTH_THRESH),
+            ("GAZE :", avg_gaze, avg_gaze < GAZE_MIN or avg_gaze > GAZE_MAX),
+            ("TURN :", turn, turn < TURN_MIN or turn > TURN_MAX),
+            ("PITCH:", pitch, pitch > NOD_THRESH), ("ROLL :", abs(roll), abs(roll) > TILT_THRESH),
+        ]
+        for i, (label, val, warn) in enumerate(rows):
+            y = h - 14 - (len(rows) - 1 - i) * 22
+            cv2.putText(frame, label, (12, y), FONT, 0.50, CLR_GRAY, 1)
+            cv2.putText(frame, f"{val:.2f}", (100, y), FONT, 0.50, CLR_RED if warn else CLR_GREEN, 2)
 
-    # ── NO FACE DETECTED ──────────────────────────────────────────────────
+        cd_y = h - 14
+        for atype, t in cooldowns.items():
+            if t - now > 0:
+                cv2.putText(frame, f"[{atype} ❄ {t - now:.1f}s]", (w - 230, cd_y), FONT, 0.40, CLR_ICE, 1)
+                cd_y -= 18
     else:
-        # Mirrors engine.js: stop alarm + clear alert when face leaves frame
-        if alarm_sound:
-            alarm_sound.stop()
+        if alarm_sound: alarm_sound.stop()
+        if chime_sound: chime_sound.stop()
         active_alert = None
+        current_audio_level = 0
         cv2.putText(frame, "No face detected", (12, 40), FONT, 0.7, CLR_GRAY, 2)
 
-    # ── NIGHT VISION FILTER ───────────────────────────────────────────────
-    if nv_mode:
-        frame = apply_night_vision(frame)
+    # Night Vision Effect (apply before showing, but after MediaPipe to not break inference)
+    if is_night_vision:
+        # Increase brightness/contrast
+        enhanced = cv2.convertScaleAbs(frame, alpha=1.2, beta=20)
+        gray = cv2.cvtColor(enhanced, cv2.COLOR_BGR2GRAY)
+        # Create green tint (B=0, G=gray, R=0)
+        zeros = np.zeros_like(gray)
+        frame = cv2.merge([zeros, gray, zeros])
+        cv2.putText(frame, "NIGHT VISION ACTIVE", (w - 200, 70), FONT, 0.5, (0, 255, 0), 1)
 
     cv2.imshow("NeuroGuard Pro Engine", frame)
     key = cv2.waitKey(1) & 0xFF
-    if key == ord("q"):
-        break
-    elif key == ord("n"):
-        nv_mode = not nv_mode
-        print(f"Night vision: {'ON' if nv_mode else 'OFF'}")
+    if key == ord("q"): break
+    elif key == ord("n"): is_night_vision = not is_night_vision
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  CLEANUP
-# ─────────────────────────────────────────────────────────────────────────────
 cap.release()
 cv2.destroyAllWindows()
 landmarker.close()
-if alarm_sound:
-    alarm_sound.stop()
+if alarm_sound: alarm_sound.stop()
+if chime_sound: chime_sound.stop()
 print(f"\n🏁  Session {SESSION_ID} closed.")

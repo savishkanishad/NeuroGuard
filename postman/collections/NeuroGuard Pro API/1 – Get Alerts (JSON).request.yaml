@@ -1,0 +1,32 @@
+$kind: http-request
+description: |-
+  Returns today's alert stats and the last 20 alerts with driver names.
+
+  Expected response:
+  {
+    "stats": { "total_today": N, "high_severity": N },
+    "alerts": [ { alert rows... } ]
+  }
+url: "{{base_url}}/get_alerts_json.php"
+method: GET
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('Status is 200', function () {
+          pm.response.to.have.status(200);
+      });
+
+      pm.test('Content-Type is JSON', function () {
+          pm.response.to.have.header('Content-Type', 'application/json');
+      });
+
+      pm.test('Response has stats and alerts keys', function () {
+          const json = pm.response.json();
+          pm.expect(json).to.have.property('stats');
+          pm.expect(json).to.have.property('alerts');
+          pm.expect(json.stats).to.have.property('total_today');
+          pm.expect(json.stats).to.have.property('high_severity');
+          pm.expect(json.alerts).to.be.an('array');
+      });
+    language: text/javascript
+order: 1000
