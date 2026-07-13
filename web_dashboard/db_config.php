@@ -38,7 +38,7 @@ try {
         throw new Exception($conn->connect_error);
     }
     $conn->query("SET time_zone = '+05:30'");
-} catch (Exception $e) {
+} catch (Throwable $e) {
     $DB_ERROR = $e->getMessage();
     $conn = null;
 }

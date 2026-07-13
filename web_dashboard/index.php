@@ -11,8 +11,8 @@ if (isset($_SESSION['LAST_ACTIVITY']) && (time() - $_SESSION['LAST_ACTIVITY']) >
 }
 $_SESSION['LAST_ACTIVITY'] = time();
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $user = $_POST['username'];
-    $pass = $_POST['password'];
+    $user = $_POST['username'] ?? '';
+    $pass = $_POST['password'] ?? '';
 
     // Rate limiting: max 5 attempts per 5 minutes
     if (!isset($_SESSION['login_attempts'])) {
@@ -27,6 +27,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ((time() - $_SESSION['last_attempt_time']) >= 300) {
             $_SESSION['login_attempts'] = 0;
         }
+
+        if ($conn === null) {
+            $error = 'Database unavailable. Please try again later.';
+        } else {
 
         // Check credentials using prepared statements to prevent SQL Injection
         $stmt = $conn->prepare("SELECT * FROM admin_users WHERE username=?");
@@ -54,6 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $stmt->close();
     }
+}
 }
 ?>
 

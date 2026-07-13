@@ -3,6 +3,7 @@ header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Headers: X-API-Key, Content-Type");
 header("Access-Control-Allow-Methods: POST, OPTIONS");
 require_once 'db_config.php';
+if ($conn === null) { http_response_code(503); exit('Error: Database unavailable'); }
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
@@ -40,5 +41,5 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $stmt->close();
 }
 
-$conn->close();
+if ($conn !== null) { $conn->close(); }
 ?>

@@ -6,7 +6,7 @@ if (!isset($_SESSION['admin_logged_in'])) {
 }
 require_once 'db_config.php';
 
-$drivers_result = $conn->query("SELECT driver_id, full_name FROM drivers ORDER BY full_name ASC");
+$drivers_result = $conn !== null ? $conn->query("SELECT driver_id, full_name FROM drivers ORDER BY full_name ASC") : false;
 $drivers = [];
 if ($drivers_result) {
     while($row = $drivers_result->fetch_assoc()) {
@@ -298,6 +298,10 @@ if ($drivers_result) {
                 <div class="status-label">Alerting</div>
                 <div class="status-value" id="alert-status">All Clear</div>
             </div>
+            <div class="status-card">
+                <div class="status-label">GPS Location</div>
+                <div class="status-value" id="gps-status-value" style="font-size: 14px;">Requesting…</div>
+            </div>
         </div>
 
         <div id="alert-banner" class="alert-banner">DROWSY!</div>
@@ -307,7 +311,7 @@ if ($drivers_result) {
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js" crossorigin="anonymous"></script>
     <script type="module">
         import { startEngine } from './engine.js';
-        
+
         document.getElementById('start-monitor-btn').addEventListener('click', () => {
             const driverId = document.getElementById('driver-select').value;
             if (!driverId) {
@@ -317,6 +321,26 @@ if ($drivers_result) {
             document.getElementById('driver-selection-overlay').style.display = 'none';
             document.getElementById('loading-overlay').style.display = 'flex';
             startEngine(driverId);
+        });
+
+        // Reflect the precise browser location (and its accuracy radius) live,
+        // straight off the same events the Live Map and alert log consume.
+        const gpsStatusEl = document.getElementById('gps-status-value');
+        const sourceColors = { gps: '#34d399', ip: '#fbbf24', fallback: '#94a3b8' };
+        window.addEventListener('ng:location', (e) => {
+            const { lat, lng, source, accuracy, error } = e.detail || {};
+            if (error) {
+                gpsStatusEl.textContent = 'Unavailable';
+                gpsStatusEl.style.color = '#ef4444';
+                return;
+            }
+            if (typeof lat !== 'number' || typeof lng !== 'number') return;
+            const accLabel = typeof accuracy === 'number' ? ` ±${Math.round(accuracy)}m` : '';
+            gpsStatusEl.textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)}${accLabel}`;
+            gpsStatusEl.style.color = sourceColors[source] || '#f8fafc';
+            gpsStatusEl.title = source === 'gps' ? 'Live GPS fix'
+                : source === 'ip' ? 'Approximate — IP-based location'
+                : 'Estimated — no GPS or IP location available';
         });
     </script>
 </body>

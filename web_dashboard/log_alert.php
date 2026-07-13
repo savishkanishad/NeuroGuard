@@ -55,7 +55,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $longitude = isset($_POST['longitude']) && $_POST['longitude'] !== '' ? (float)$_POST['longitude'] : null;
     $latitude_value = ($latitude !== null && is_numeric($latitude)) ? sprintf('%.6f', $latitude) : null;
     $longitude_value = ($longitude !== null && is_numeric($longitude)) ? sprintf('%.6f', $longitude) : null;
+    $location_source = $_POST['location_source'] ?? null; // 'gps' | 'ip' | 'fallback', set by engine.js
 
+    // Accuracy radius in meters, straight from navigator.geolocation's
+    // coords.accuracy (or a nominal estimate engine.js assigns for ip/fallback
+    // fixes). Used by the Live Map to draw a "how sure are we" circle.
+    $accuracy = (isset($_POST['accuracy']) && $_POST['accuracy'] !== '' && is_numeric($_POST['accuracy']))
+        ? (float)$_POST['accuracy']
+        : null;
+    $accuracy_value = ($accuracy !== null) ? sprintf('%.2f', $accuracy) : null;
+
+    // Guarantee every alert has a location, no matter what the client sent.
+    // Without this, any request that omits latitude/longitude (manual API
+    // testing, curl, a client with GPS denied) silently stores NULL and the
+    // alert disappears from the Live Map with no indication why.
+    // DEFAULT_LAT/LNG below is the fleet depot fallback (Colombo); swap for
+    // your actual base location if different. A small random jitter keeps
+    // markers from stacking exactly on top of each other.
+    if ($latitude_value === null || $longitude_value === null) {
+        $DEFAULT_LAT = 6.9271;
+        $DEFAULT_LNG = 79.8612;
+        $latitude_value  = sprintf('%.6f', $DEFAULT_LAT + (mt_rand(-500, 500) / 100000));
+        $longitude_value = sprintf('%.6f', $DEFAULT_LNG + (mt_rand(-500, 500) / 100000));
+        $location_source = 'server_fallback'; // tagged so it's visibly NOT a real reading
+        $accuracy_value  = '25000.00'; // 25km nominal radius — makes clear this is a guess, not a fix
+    }
+
+    $storedFallback = false;
     if ($db_available) {
         // --- SERVER-SIDE DEBOUNCING ---
         $debounce_check = $conn->prepare("SELECT alert_id FROM alerts WHERE session_id = ? AND alert_type = ? AND timestamp > (NOW() - INTERVAL 10 SECOND)");
@@ -71,33 +97,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $debounce_check->close();
 
-        $stmt = $conn->prepare("INSERT INTO alerts (session_id, driver_id, alert_type, severity, latitude, longitude, timestamp) VALUES (?, ?, ?, ?, ?, ?, NOW())");
-        $stmt->bind_param("iissss", $session_id, $driver_id, $type, $severity, $latitude_value, $longitude_value);
+        $stmt = $conn->prepare("INSERT INTO alerts (session_id, driver_id, alert_type, severity, latitude, longitude, location_source, accuracy, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())");
 
-        if ($stmt->execute()) {
-            echo "Success";
+        if ($stmt === false) {
+            // Most likely cause: the alerts table doesn't have latitude/longitude/
+            // location_source/accuracy columns yet. Run migrate_live_location.sql
+            // against your database, or fall back for now.
+            echo "SQL Error: " . $conn->error;
+            $storedFallback = true;
         } else {
-            echo "SQL Error: " . $stmt->error; 
+            $stmt->bind_param("iissssss", $session_id, $driver_id, $type, $severity, $latitude_value, $longitude_value, $location_source, $accuracy_value);
+
+            if ($stmt->execute()) {
+                echo "Success";
+            } else {
+                echo "SQL Error: " . $stmt->error;
+                $storedFallback = true;
+            }
+
+            $stmt->close();
         }
-        
-        $stmt->close();
     } else {
         echo "Stored in fallback tracker";
+        $storedFallback = true;
     }
 
-    $fallback_payload = [
-        'alert_id' => time(),
-        'driver_id' => $driver_id,
-        'session_id' => $session_id,
-        'alert_type' => $type,
-        'severity' => $severity,
-        'latitude' => $latitude_value,
-        'longitude' => $longitude_value,
-        'timestamp' => date('Y-m-d H:i:s'),
-        'full_name' => 'Fallback Driver'
-    ];
-    save_alert_fallback($fallback_payload);
+    if ($storedFallback) {
+        $fallback_payload = [
+            'alert_id' => time(),
+            'driver_id' => $driver_id,
+            'session_id' => $session_id,
+            'alert_type' => $type,
+            'severity' => $severity,
+            'latitude' => $latitude_value,
+            'longitude' => $longitude_value,
+            'location_source' => $location_source,
+            'accuracy' => $accuracy_value,
+            'timestamp' => date('Y-m-d H:i:s'),
+            'full_name' => 'Fallback Driver'
+        ];
+        save_alert_fallback($fallback_payload);
+    }
 }
+
 if ($conn !== null) {
     $conn->close();
 }

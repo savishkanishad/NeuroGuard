@@ -100,46 +100,117 @@ alarm.loop  = true;
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  GEOLOCATION — Real GPS tracking
+//
+//  currentAccuracy is navigator.geolocation's coords.accuracy: a 68%-
+//  confidence radius in meters, not a fixed error bound. Typical values:
+//  ~5-20m outdoors with GPS/GNSS chips (phones), ~20-100m indoors/Wi-Fi
+//  positioning, ~1-5km for IP-based estimates. We always keep and publish
+//  the newest fix (a moving vehicle needs current position, not just the
+//  single most-accurate one seen), but we surface the accuracy figure
+//  everywhere downstream (UI status card, alert rows, live map circle) so
+//  low-confidence fixes are visibly flagged rather than presented as exact.
 // ─────────────────────────────────────────────────────────────────────────────
-let currentLat    = null;
-let currentLng    = null;
-let gpsWatchId    = null;
-let locationPromise = null;
-let locationSource = 'pending';
+let currentLat      = null;
+let currentLng      = null;
+let currentAccuracy = null;   // meters, or null if unknown (e.g. old browsers)
+let lastFixAt        = 0;     // Date.now() of the last accepted fix
+let gpsWatchId       = null;
+let locationPromise  = null;
+let locationSource   = 'pending';
+let livePingTimer    = null;
 window.gpsStatus  = 'Requesting…';
 
-function publishLocation(lat, lng, source) {
+const LIVE_PING_INTERVAL_MS = 5000;   // cadence for the "heartbeat" position ping
+const WATCH_STALE_MS        = 25000;  // if the watch goes this long without a fix, nudge it
+
+function publishLocation(lat, lng, source, accuracy) {
   currentLat = lat;
   currentLng = lng;
   locationSource = source;
-  window.gpsStatus = `${currentLat.toFixed(4)}, ${currentLng.toFixed(4)} (${source})`;
+  currentAccuracy = (typeof accuracy === 'number' && isFinite(accuracy)) ? accuracy : null;
+  lastFixAt = Date.now();
+
+  const accLabel = currentAccuracy !== null ? `, ±${Math.round(currentAccuracy)}m` : '';
+  window.gpsStatus = `${currentLat.toFixed(5)}, ${currentLng.toFixed(5)} (${source}${accLabel})`;
+
   window.dispatchEvent(new CustomEvent('ng:location', {
-    detail: { lat: currentLat, lng: currentLng, source }
+    detail: { lat: currentLat, lng: currentLng, source, accuracy: currentAccuracy }
   }));
 }
 
 function startGeolocation() {
   if (!navigator.geolocation) {
     window.gpsStatus = 'Not Supported';
+    window.dispatchEvent(new CustomEvent('ng:location', { detail: { error: 'Geolocation not supported by this browser' } }));
     return;
   }
   window.gpsStatus = 'Acquiring…';
 
   gpsWatchId = navigator.geolocation.watchPosition(
     (pos) => {
-      publishLocation(pos.coords.latitude, pos.coords.longitude, 'gps');
+      publishLocation(pos.coords.latitude, pos.coords.longitude, 'gps', pos.coords.accuracy);
     },
     (err) => {
       window.gpsStatus = 'Denied / Error';
       console.warn('[GPS] Error:', err.message);
+      window.dispatchEvent(new CustomEvent('ng:location', { detail: { error: err.message } }));
     },
     { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
   );
+
+  // watchPosition should keep firing on its own, but on some mobile browsers
+  // it can silently go quiet after the tab is backgrounded/foregrounded. If
+  // we haven't heard anything in a while, force a fresh single-shot fix so a
+  // long drive doesn't end up stuck showing a stale first position.
+  setInterval(() => {
+    if (Date.now() - lastFixAt > WATCH_STALE_MS) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => publishLocation(pos.coords.latitude, pos.coords.longitude, 'gps', pos.coords.accuracy),
+        (err) => console.warn('[GPS] Stale-watch nudge failed:', err.message),
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+      );
+    }
+  }, WATCH_STALE_MS);
+
+  // Push the driver's live position to the server on a fixed cadence so the
+  // Live Fleet Map shows real-time movement, not just the positions attached
+  // to alerts (which can be minutes apart, or never happen at all on a clean
+  // drive). Runs independently of the AI detection loop.
+  if (livePingTimer) clearInterval(livePingTimer);
+  livePingTimer = setInterval(pingLivePosition, LIVE_PING_INTERVAL_MS);
+
+  window.addEventListener('beforeunload', () => {
+    if (gpsWatchId !== null) navigator.geolocation.clearWatch(gpsWatchId);
+    if (livePingTimer) clearInterval(livePingTimer);
+  }, { once: true });
+}
+
+// Lightweight heartbeat: sends whatever the freshest known position is to
+// update_location.php. Separate table from `alerts` — this is "where is the
+// driver right now", not "what happened at the moment of an alert".
+async function pingLivePosition() {
+  if (currentLat === null || currentLng === null) return;
+  if (!window.SESSION_ID) return;
+
+  const formData = new FormData();
+  formData.append('driver_id',  window.DRIVER_ID  || '1');
+  formData.append('session_id', window.SESSION_ID || '1');
+  formData.append('latitude',   currentLat.toFixed(6));
+  formData.append('longitude',  currentLng.toFixed(6));
+  if (currentAccuracy !== null) formData.append('accuracy', currentAccuracy.toFixed(2));
+  formData.append('location_source', (locationSource === 'gps' || locationSource === 'ip') ? locationSource : 'fallback');
+  formData.append('api_key', 'NgPro2026_xYz98!');
+
+  try {
+    await fetch('update_location.php', { method: 'POST', body: formData });
+  } catch (e) {
+    console.warn('[NeuroGuard] Live position ping failed:', e);
+  }
 }
 
 async function resolveLocation() {
   if (currentLat !== null && currentLng !== null) {
-    return { lat: currentLat, lng: currentLng, source: locationSource };
+    return { lat: currentLat, lng: currentLng, source: locationSource, accuracy: currentAccuracy };
   }
 
   if (locationPromise) {
@@ -156,8 +227,8 @@ async function resolveLocation() {
             timeout: 8000
           });
         });
-        publishLocation(pos.coords.latitude, pos.coords.longitude, 'gps');
-        return { lat: pos.coords.latitude, lng: pos.coords.longitude, source: 'gps' };
+        publishLocation(pos.coords.latitude, pos.coords.longitude, 'gps', pos.coords.accuracy);
+        return { lat: pos.coords.latitude, lng: pos.coords.longitude, source: 'gps', accuracy: pos.coords.accuracy };
       }
     } catch (err) {
       console.warn('[GPS] Could not resolve live coordinates, trying IP fallback:', err.message);
@@ -167,17 +238,22 @@ async function resolveLocation() {
       const response = await fetch('https://ipapi.co/json/');
       const data = await response.json();
       if (data && data.latitude && data.longitude) {
-        publishLocation(parseFloat(data.latitude), parseFloat(data.longitude), 'ip');
-        return { lat: parseFloat(data.latitude), lng: parseFloat(data.longitude), source: 'ip' };
+        // ipapi doesn't report a real accuracy figure — city-level IP geolocation
+        // is reliably only accurate to a few kilometers, so we tag it with a
+        // nominal 5km radius rather than implying GPS-grade precision.
+        const IP_ACCURACY_M = 5000;
+        publishLocation(parseFloat(data.latitude), parseFloat(data.longitude), 'ip', IP_ACCURACY_M);
+        return { lat: parseFloat(data.latitude), lng: parseFloat(data.longitude), source: 'ip', accuracy: IP_ACCURACY_M };
       }
     } catch (ipErr) {
       console.warn('[GPS] IP fallback unavailable:', ipErr);
     }
 
+    const FALLBACK_ACCURACY_M = 20000; // 20km — this is a guess, not a fix
     const fallbackLat = 6.9271 + (Math.random() - 0.5) * 0.05;
     const fallbackLng = 79.8612 + (Math.random() - 0.5) * 0.05;
-    publishLocation(fallbackLat, fallbackLng, 'fallback');
-    return { lat: fallbackLat, lng: fallbackLng, source: 'fallback' };
+    publishLocation(fallbackLat, fallbackLng, 'fallback', FALLBACK_ACCURACY_M);
+    return { lat: fallbackLat, lng: fallbackLng, source: 'fallback', accuracy: FALLBACK_ACCURACY_M };
   })();
 
   try {
@@ -288,7 +364,7 @@ async function syncToDB(alertType, severity = "Medium") {
   lastSyncTimes[alertType] = now;
   console.log(`[NeuroGuard] Sending ${alertType} (${severity}) alert…`);
 
-  const { lat, lng } = await resolveLocation();
+  const { lat, lng, accuracy } = await resolveLocation();
 
   const formData = new FormData();
   formData.append('driver_id',  window.DRIVER_ID  || '1');
@@ -297,6 +373,9 @@ async function syncToDB(alertType, severity = "Medium") {
   formData.append('severity',   severity);
   formData.append('latitude',   lat.toFixed(6));
   formData.append('longitude',  lng.toFixed(6));
+  if (typeof accuracy === 'number' && isFinite(accuracy)) {
+    formData.append('accuracy', accuracy.toFixed(2));
+  }
   formData.append('location_source', locationSource);
   formData.append('api_key',    'NgPro2026_xYz98!');
 

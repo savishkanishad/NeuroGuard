@@ -25,6 +25,7 @@ SET time_zone = "+00:00";
 -- Drop existing tables first to avoid tablespace conflicts
 -- ============================================================
 SET FOREIGN_KEY_CHECKS = 0;
+DROP TABLE IF EXISTS `live_positions`;
 DROP TABLE IF EXISTS `alerts`;
 DROP TABLE IF EXISTS `sessions`;
 DROP TABLE IF EXISTS `drivers`;
@@ -65,6 +66,8 @@ CREATE TABLE `alerts` (
   `severity` enum('Low','Medium','High','Critical') DEFAULT 'Medium',
   `latitude` decimal(10,8) DEFAULT NULL,
   `longitude` decimal(11,8) DEFAULT NULL,
+  `location_source` enum('gps','ip','fallback','server_fallback') DEFAULT NULL COMMENT 'how this fix was obtained: gps=browser Geolocation API, ip=IP-based estimate, fallback=client had nothing, server_fallback=request omitted lat/lng entirely',
+  `accuracy` decimal(8,2) DEFAULT NULL COMMENT 'radius in meters reported by navigator.geolocation (or a nominal estimate for ip/fallback)',
   `timestamp` datetime DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -72,10 +75,10 @@ CREATE TABLE `alerts` (
 -- Dumping data for table `alerts`
 --
 
-INSERT INTO `alerts` (`alert_id`, `session_id`, `driver_id`, `alert_type`, `severity`, `timestamp`) VALUES
-(501, 1, 1, 'Drowsy', 'High', '2026-03-10 18:58:59'),
-(502, 1, 1, 'Yawn', 'Medium', '2026-03-10 19:09:23'),
-(503, 1, 1, 'Distracted', 'Medium', '2026-03-10 19:11:08');
+INSERT INTO `alerts` (`alert_id`, `session_id`, `driver_id`, `alert_type`, `severity`, `latitude`, `longitude`, `location_source`, `accuracy`, `timestamp`) VALUES
+(501, 1, 1, 'Drowsy', 'High', 6.92710000, 79.86120000, 'gps', 12.50, '2026-03-10 18:58:59'),
+(502, 1, 1, 'Yawn', 'Medium', 6.93150000, 79.85700000, 'gps', 18.00, '2026-03-10 19:09:23'),
+(503, 1, 1, 'Distracted', 'Medium', 6.90200000, 79.86900000, 'gps', 9.80, '2026-03-10 19:11:08');
 
 -- --------------------------------------------------------
 
@@ -120,6 +123,30 @@ INSERT INTO `sessions` (`session_id`, `driver_id`, `start_time`, `end_time`, `st
 (1, 1, '2026-03-10 18:34:23', NULL, 'Active'),
 (2, 1, '2026-03-10 20:22:05', NULL, 'Active');
 
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `live_positions`
+--
+-- One row per driver: the browser's most recent GPS fix, refreshed every
+-- few seconds by update_location.php while a monitoring session is open.
+-- This powers the "live dot" on the Live Fleet Map (map.php), independent
+-- of the `alerts` table which only records a position at the moment an
+-- alert fires. A row older than ~20s is treated as stale/offline by the
+-- frontend (see get_live_positions.php), not deleted, so the map can still
+-- show a driver's last known position.
+--
+
+CREATE TABLE `live_positions` (
+  `driver_id` int(11) NOT NULL,
+  `session_id` int(11) NOT NULL,
+  `latitude` decimal(10,8) NOT NULL,
+  `longitude` decimal(11,8) NOT NULL,
+  `accuracy` decimal(8,2) DEFAULT NULL COMMENT 'radius in meters reported by navigator.geolocation',
+  `location_source` enum('gps','ip','fallback') NOT NULL DEFAULT 'gps',
+  `updated_at` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
 --
 -- Indexes for dumped tables
 --
@@ -152,6 +179,13 @@ ALTER TABLE `drivers`
 ALTER TABLE `sessions`
   ADD PRIMARY KEY (`session_id`),
   ADD KEY `driver_id` (`driver_id`);
+
+--
+-- Indexes for table `live_positions`
+--
+ALTER TABLE `live_positions`
+  ADD PRIMARY KEY (`driver_id`),
+  ADD KEY `session_id` (`session_id`);
 
 --
 -- AUTO_INCREMENT for dumped tables
@@ -197,6 +231,13 @@ ALTER TABLE `alerts`
 --
 ALTER TABLE `sessions`
   ADD CONSTRAINT `sessions_ibfk_1` FOREIGN KEY (`driver_id`) REFERENCES `drivers` (`driver_id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `live_positions`
+--
+ALTER TABLE `live_positions`
+  ADD CONSTRAINT `live_positions_ibfk_1` FOREIGN KEY (`driver_id`) REFERENCES `drivers` (`driver_id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `live_positions_ibfk_2` FOREIGN KEY (`session_id`) REFERENCES `sessions` (`session_id`) ON DELETE CASCADE;
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;

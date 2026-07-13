@@ -128,6 +128,18 @@
               "value": "Drowsy",
               "type": "text",
               "description": "Options: Drowsy (High severity) | Yawning | Distracted (Medium severity)"
+            },
+            {
+              "key": "latitude",
+              "value": "6.9271",
+              "type": "text",
+              "description": "Optional, but required for the alert to appear on the Live Map"
+            },
+            {
+              "key": "longitude",
+              "value": "79.8612",
+              "type": "text",
+              "description": "Optional, but required for the alert to appear on the Live Map"
             }
           ]
         },

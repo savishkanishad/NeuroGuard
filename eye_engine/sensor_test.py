@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import threading
 import urllib.parse
@@ -12,6 +13,9 @@ import cv2
 import numpy as np
 from scipy.spatial import distance as dist
 from pygame import mixer
+
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  0.  ENVIRONMENT & CONFIG
@@ -29,9 +33,14 @@ DRIVER_ID = int(os.getenv("DRIVER_ID", 1))
 ALARM_PATH = os.path.join(BASE_DIR, "alarm.wav")
 CHIME_PATH = os.path.join(BASE_DIR, "chime.wav")
 
-mixer.init()
-alarm_sound = mixer.Sound(ALARM_PATH) if os.path.exists(ALARM_PATH) else None
-chime_sound = mixer.Sound(CHIME_PATH) if os.path.exists(CHIME_PATH) else alarm_sound
+try:
+    mixer.init()
+    alarm_sound = mixer.Sound(ALARM_PATH) if os.path.exists(ALARM_PATH) else None
+    chime_sound = mixer.Sound(CHIME_PATH) if os.path.exists(CHIME_PATH) else alarm_sound
+except Exception as exc:
+    print(f'[Audio] Disabled: {exc}')
+    alarm_sound = None
+    chime_sound = None
 
 if alarm_sound: print("✅  Alarm loaded")
 if os.path.exists(CHIME_PATH): print("✅  Chime loaded")
