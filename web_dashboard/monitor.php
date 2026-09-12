@@ -102,6 +102,14 @@ if ($drivers_result) {
             color: #020617;
         }
 
+        .startup-error {
+            max-width: 420px;
+            margin: 16px 0;
+            color: #fca5a5;
+            text-align: center;
+            line-height: 1.5;
+        }
+
         video#webcam {
             width: 100%;
             height: 100%;
@@ -256,6 +264,28 @@ if ($drivers_result) {
                 text-align: center;
             }
         }
+
+        #error-overlay {
+            position: absolute;
+            inset: 0;
+            background: var(--bg-color);
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 200;
+            text-align: center;
+            padding: 20px;
+        }
+
+        #error-overlay p {
+            color: var(--accent-red);
+            font-size: 18px;
+            font-weight: 600;
+            max-width: 500px;
+            line-height: 1.6;
+            margin-bottom: 30px;
+        }
     </style>
 </head>
 <body>
@@ -267,12 +297,23 @@ if ($drivers_result) {
                 <option value="<?= $d['driver_id'] ?>"><?= htmlspecialchars($d['full_name']) ?></option>
             <?php endforeach; ?>
         </select>
-        <button id="start-monitor-btn" class="nv-btn" style="padding: 12px 30px; font-size: 16px;">Start Monitoring</button>
+        <?php if ($conn === null): ?>
+            <p class="startup-error">Database unavailable. Check the InfinityFree MySQL host, username, password, and database name.</p>
+        <?php elseif (!$drivers): ?>
+            <p class="startup-error">No drivers found. Add at least one driver before starting monitoring.</p>
+        <?php endif; ?>
+        <button type="button" id="start-monitor-btn" class="nv-btn" style="padding: 12px 30px; font-size: 16px;">Start Monitoring</button>
     </div>
 
     <div id="loading-overlay">
         <span class="loader"></span>
         <p style="margin-top: 20px; font-weight: 600;">Initializing AI Engine...</p>
+        <p id="loading-step" style="color:#94a3b8; font-size:13px; margin-top:6px;">Starting…</p>
+    </div>
+
+    <div id="error-overlay">
+        <p>Could not start monitoring. Allow camera access,<br>check your internet connection, then try again.</p>
+        <button class="nv-btn" onclick="location.reload()" style="padding: 12px 30px; font-size: 16px;">Try again</button>
     </div>
 
     <div class="header">
@@ -307,20 +348,28 @@ if ($drivers_result) {
         <div id="alert-banner" class="alert-banner">DROWSY!</div>
     </div>
 
-    <!-- MediaPipe Libraries -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js" crossorigin="anonymous"></script>
+    <!-- MediaPipe is loaded as an ES-module inside engine.js; no duplicate script tag needed -->
     <script type="module">
-        import { startEngine } from './engine.js';
+        import { startEngine } from './engine.js?v=2';
 
-        document.getElementById('start-monitor-btn').addEventListener('click', () => {
+        document.getElementById('start-monitor-btn').addEventListener('click', async () => {
             const driverId = document.getElementById('driver-select').value;
             if (!driverId) {
-                alert("Please select a driver first.");
+                alert("No driver is selected. Check that the database is connected and that at least one driver exists.");
                 return;
             }
+            const startButton = document.getElementById('start-monitor-btn');
+            startButton.disabled = true;
             document.getElementById('driver-selection-overlay').style.display = 'none';
             document.getElementById('loading-overlay').style.display = 'flex';
-            startEngine(driverId);
+            try {
+                await startEngine(driverId);
+            } catch (error) {
+                console.error('[NeuroGuard] Monitor startup failed:', error);
+                document.getElementById('loading-overlay').style.display = 'none';
+                document.getElementById('driver-selection-overlay').style.display = 'flex';
+                startButton.disabled = false;
+            }
         });
 
         // Reflect the precise browser location (and its accuracy radius) live,

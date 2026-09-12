@@ -1,28 +1,35 @@
-import {
-  FaceLandmarker,
-  FilesetResolver,
-  DrawingUtils
-} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js";
+// MediaPipe classes — loaded dynamically inside initialize() so that
+// a CDN failure never prevents engine.js from loading or the click
+// handler from being registered.
+let FaceLandmarker, FilesetResolver;
 
-const video          = document.getElementById("webcam");
-const canvasElement  = document.getElementById("output_canvas");
-const canvasCtx      = canvasElement.getContext("2d");
-const alertBanner    = document.getElementById("alert-banner");
-const engineStatus   = document.getElementById("engine-status");
-const alertStatus    = document.getElementById("alert-status");
-const loadingOverlay = document.getElementById("loading-overlay");
-const nvToggle       = document.getElementById("nv-toggle");
+const MEDIAPIPE_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
+const MEDIAPIPE_WASM = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 
-if (nvToggle) {
-  nvToggle.addEventListener("click", () => {
-    const wrapper = document.getElementById("camera-wrapper");
-    if (wrapper) wrapper.classList.toggle("night-vision");
-    nvToggle.classList.toggle("active");
-  });
-}
+// DOM elements — resolved lazily inside startEngine once page is fully loaded
+let video, canvasElement, canvasCtx, alertBanner, engineStatus, alertStatus, loadingOverlay, nvToggle;
+
+// Night-vision toggle — wired up lazily in startEngine
 
 let faceLandmarker;
 let runningMode   = "VIDEO";
+
+function showError(msg) {
+  const errorOverlay  = document.getElementById("error-overlay");
+  const loadingOverlay = document.getElementById("loading-overlay");
+  const errMsg = errorOverlay && errorOverlay.querySelector('p');
+  if (loadingOverlay) loadingOverlay.style.display = "none";
+  if (errMsg && msg) errMsg.innerHTML = msg;
+  if (errorOverlay) errorOverlay.style.display = "flex";
+}
+
+function setStep(msg) {
+  const el = document.getElementById('loading-step');
+  if (el) el.textContent = msg;
+  console.log('[NeuroGuard]', msg);
+}
+
 let lastVideoTime    = -1;
 let results          = undefined;
 let _lastDetectedTs  = -1;   // strictly-increasing timestamp guard for MediaPipe
@@ -265,37 +272,100 @@ async function resolveLocation() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  INITIALIZE MEDIAPIPE
+//  Tries GPU delegate first; falls back to CPU if GPU/WebGL is unavailable
+//  (common on shared / free hosting environments).
 // ─────────────────────────────────────────────────────────────────────────────
 async function initialize() {
-  const filesetResolver = await FilesetResolver.forVisionTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm"
-  );
-  faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
-    baseOptions: {
-      modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`,
-      delegate: "GPU"
-    },
-    outputFaceBlendshapes: true,
-    runningMode: runningMode,
-    numFaces: 1
-  });
+  try {
+    // ─ Dynamic import: engine.js loads fine even if this CDN is slow/down ─
+    setStep('Loading MediaPipe library…');
+    const mp = await import(MEDIAPIPE_URL);
+    FaceLandmarker  = mp.FaceLandmarker;
+    FilesetResolver = mp.FilesetResolver;
 
-  startCamera();
+    if (!FilesetResolver || !FaceLandmarker) {
+      throw new Error('MediaPipe exports not found in bundle. CDN may have served the wrong file.');
+    }
+
+    setStep('Loading WASM runtime…');
+    const filesetResolver = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM);
+
+    setStep('Loading face landmarker model (GPU)…');
+    try {
+      faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+        baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
+        outputFaceBlendshapes: true,
+        runningMode,
+        numFaces: 1
+      });
+      console.log('[NeuroGuard] GPU delegate loaded.');
+    } catch (gpuErr) {
+      console.warn('[NeuroGuard] GPU failed, retrying with CPU:', gpuErr);
+      setStep('GPU unavailable — retrying with CPU…');
+      faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+        baseOptions: { modelAssetPath: MODEL_URL, delegate: 'CPU' },
+        outputFaceBlendshapes: true,
+        runningMode,
+        numFaces: 1
+      });
+      console.log('[NeuroGuard] CPU delegate loaded.');
+    }
+
+    // Camera is already live — go straight to calibration
+    setStep('Starting calibration…');
+    lastVideoTime = -1;
+    runCalibration();
+  } catch (err) {
+    console.error('[NeuroGuard] AI Model init failed:', err);
+    showError('Could not load the AI model.<br>Check your internet connection, then try again.<br><small style="opacity:.6">' + err.message + '</small>');
+  }
 }
 
 function startCamera() {
-  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showError('Camera API not available.<br>Please use Chrome or Firefox over HTTPS.');
+    return Promise.reject(new Error('getUserMedia unavailable'));
+  }
+  const permissionTimeout = new Promise((_, reject) => {
+    setTimeout(() => {
+      const error = new Error('Camera permission request timed out.');
+      error.name = 'PermissionTimeoutError';
+      reject(error);
+    }, 15000);
+  });
+  return Promise.race([
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false }),
+    permissionTimeout
+  ])
     .then((stream) => {
       video.srcObject = stream;
-      video.addEventListener("loadeddata", () => {
-        loadingOverlay.style.display = "none";
-        startGeolocation();        // start real GPS alongside AI engine
-        runCalibration();          // calibrate before entering main loop
+      return new Promise((resolve, reject) => {
+        const onReady = () => {
+          video.removeEventListener("loadedmetadata", onReady);
+          video.removeEventListener("error", onError);
+          video.play().then(() => {
+            loadingOverlay.style.display = "none";
+            resolve(stream);
+          }).catch(reject);
+        };
+        const onError = () => reject(new Error('Camera stream could not be displayed.'));
+
+        video.addEventListener("loadedmetadata", onReady, { once: true });
+        video.addEventListener("error", onError, { once: true });
+        if (video.readyState >= HTMLMediaElement.HAVE_METADATA) onReady();
       });
     })
     .catch(e => {
       engineStatus.textContent = "Camera Error";
       console.error(e);
+      let hint = 'Could not access the camera.<br>';
+      if (e.name === 'NotAllowedError')  hint += 'Permission denied — click the camera icon in the address bar and allow access.';
+      else if (e.name === 'PermissionTimeoutError') hint += 'Camera permission was not answered — click the camera icon in the address bar, allow access, then try again.';
+      else if (e.name === 'NotFoundError') hint += 'No camera found on this device.';
+      else if (e.name === 'NotReadableError') hint += 'Camera is already in use by another app.';
+      else hint += e.message;
+      showError(hint);
+      throw e;
     });
 }
 
@@ -598,30 +668,69 @@ async function predictWebcam() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  ENTRY POINT
+//  Strategy: open camera FIRST so the user sees themselves immediately,
+//  then load MediaPipe in the background. This prevents a 30s black screen.
 // ─────────────────────────────────────────────────────────────────────────────
 export async function startEngine(driverId) {
-  window.DRIVER_ID = driverId;
-  engineStatus.textContent = "Creating Session…";
+  // ── Resolve DOM refs now (page is guaranteed to be rendered) ──────────────
+  video          = document.getElementById('webcam');
+  canvasElement  = document.getElementById('output_canvas');
+  canvasCtx      = canvasElement.getContext('2d');
+  alertBanner    = document.getElementById('alert-banner');
+  engineStatus   = document.getElementById('engine-status');
+  alertStatus    = document.getElementById('alert-status');
+  loadingOverlay = document.getElementById('loading-overlay');
+  nvToggle       = document.getElementById('nv-toggle');
 
+  // Wire Night-Vision toggle
+  if (nvToggle) {
+    nvToggle.addEventListener('click', () => {
+      const wrapper = document.getElementById('camera-wrapper');
+      if (wrapper) wrapper.classList.toggle('night-vision');
+      nvToggle.classList.toggle('active');
+    });
+  }
+
+  window.DRIVER_ID = driverId;
+  engineStatus.textContent = 'Starting…';
+
+  // ── Step 1: Open camera FIRST ─────────────────────────────────────────────
+  setStep('Requesting camera access…');
+  try {
+    await startCamera();
+    engineStatus.textContent = 'Camera Live — Loading AI…';
+  } catch (camErr) {
+    return;  // showError already called inside startCamera
+  }
+
+  // ── Step 2: Start GPS ─────────────────────────────────────────────────────
+  startGeolocation();
+
+  // ── Step 3: Create session ────────────────────────────────────────────────
+  setStep('Creating session…');
   try {
     const formData = new FormData();
     formData.append('driver_id', driverId);
     formData.append('api_key',   'NgPro2026_xYz98!');
-    const res      = await fetch('start_session.php', { method: 'POST', body: formData });
-    const text     = await res.text();
-    const sessionId = parseInt(text.trim(), 10);
-    if (!isNaN(sessionId)) {
-      window.SESSION_ID = String(sessionId);
-      console.log("[NeuroGuard] Started session:", window.SESSION_ID);
-    } else {
-      console.error("[NeuroGuard] Bad session response:", text);
-      window.SESSION_ID = '1';
+    const res  = await fetch('start_session.php', { method: 'POST', body: formData });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`Session request failed (${res.status}): ${text.trim() || 'empty response'}`);
     }
+    const sid  = parseInt(text.trim(), 10);
+    if (isNaN(sid)) {
+      throw new Error(`Invalid session response: ${text.trim() || 'empty response'}`);
+    }
+    window.SESSION_ID = String(sid);
+    console.log('[NeuroGuard] Session:', window.SESSION_ID);
   } catch (e) {
-    console.error("[NeuroGuard] Failed to start session:", e);
-    window.SESSION_ID = '1';
+    console.error('[NeuroGuard] Session creation failed:', e);
+    showError('Could not create a monitoring session.<br>Check the database connection and API key.<br><small style="opacity:.6">' + e.message + '</small>');
+    throw e;
   }
 
-  engineStatus.textContent = "Loading AI Model…";
-  initialize();
+  // ── Step 4: Load MediaPipe (camera already live while this loads) ──────────
+  setStep('Fetching AI model files…');
+  engineStatus.textContent = 'Loading AI Model…';
+  await initialize();
 }
